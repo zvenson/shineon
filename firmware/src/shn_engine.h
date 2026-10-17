@@ -487,24 +487,31 @@ static void voice_render(voice_t *v, int32_t (*bus)[HALF_FRAMES], uint32_t at)
     int32_t *b16 = bus[0] + at, *b8lo = bus[1] + at, *b8 = bus[2] + at, *b4 = bus[3] + at, *bsq = bus[4] + at;
     for (i = 0; i < CTL; i++) {
         int32_t amp = amp0 + ((da * (int32_t)i) >> 4), s;
-        if (w & W_16) { s = osc_step(&v->o16, inc16, d16, 0, OSC_SAW, -65536, -1); b16[i] += (s * amp) >> 15; }
+        /* a quarter of the level a keyer (s >> 2 first: the BLEP corrections can take s past +-32767), so 16 keyers
+         * stay within +-131k and the register filters' products within 32 bits */
+        if (w & W_16) { s = osc_step(&v->o16, inc16, d16, 0, OSC_SAW, -65536, -1); b16[i] += ((s >> 2) * amp) >> 15; }
         if (w & (W_8LO | W_8)) {
-            s = (osc_step(&v->o8, inc8, d8, 0, OSC_SAW, -65536, -1) * amp) >> 15;
+            s = ((osc_step(&v->o8, inc8, d8, 0, OSC_SAW, -65536, -1) >> 2) * amp) >> 15;
             if (w & W_8LO) b8lo[i] += s;
             if (w & W_8) b8[i] += s;
         }
-        if (w & W_4) { s = osc_step(&v->o4, inc4, d4, 0, OSC_SAW, -65536, -1); b4[i] += (s * amp) >> 15; }
-        if (w & W_SQ) { s = osc_step(&v->osq, inc8, d8, PW50, OSC_PLS, -65536, -1); bsq[i] += (s * amp) >> 15; }
+        if (w & W_4) { s = osc_step(&v->o4, inc4, d4, 0, OSC_SAW, -65536, -1); b4[i] += ((s >> 2) * amp) >> 15; }
+        if (w & W_SQ) { s = osc_step(&v->osq, inc8, d8, PW50, OSC_PLS, -65536, -1); bsq[i] += ((s >> 2) * amp) >> 15; }
     }
 }
 
 /* ---- the registers of one sound: fixed formants on its busses, the tone control, warmth, brightness. Mono, as the
  * originals (the ensemble spreads it). dst gets the sound added, both channels. */
+/* the SVF without shn_dsp.h's soft saturation of the band state: the registers are fixed EQs and must stay clean
+ * (that saturation grated on chords). Signals within +-131k keep the products in 32 bits. */
 static inline __attribute__((always_inline)) int32_t svf_out(const svf_coef_t *c, svf_state_t *s, int32_t in, uint32_t which)
 {
-    int32_t lp, bp, hp;
-    svf_step(c, s, in, &lp, &bp, &hp);
-    return which == 0 ? lp : which == 1 ? bp : hp;
+    int32_t v3 = in - s->ic2;
+    int32_t v1 = (c->a1 * s->ic1 + c->a2 * v3) >> 13;
+    int32_t v2 = s->ic2 + ((c->a2 * s->ic1 + c->a3 * v3) >> 13);
+    s->ic1 = 2 * v1 - s->ic1;
+    s->ic2 = 2 * v2 - s->ic2;
+    return which == 0 ? v2 : which == 1 ? v1 : in - ((c->k * v1) >> 12) - v2;
 }
 
 static void regs_render(part_t *g, uint32_t n, int32_t *dst)
@@ -527,12 +534,12 @@ static void regs_render(part_t *g, uint32_t n, int32_t *dst)
             y = svf_out(&C_CE, &r->ce, x, 0) + (svf_out(&C_CEF, &r->ce_f, x, 1) >> 1);
             m += (y * r->gain[R_CELLO]) >> 12;
         }
-        if (r->gain[R_VIOLA]) {                 /* 8' saw, nasal: 250 Hz off the bottom, 3.5 kHz on top, a 1.2 kHz formant */
+        if (r->gain[R_VIOLA]) {                 /* 8' saw, nasal: 250 Hz off the bottom, 2.5 kHz on top, a 1.2 kHz formant */
             x = svf_out(&C_VAH, &r->va_h, bus[2][i], 2);
             y = svf_out(&C_VA, &r->va, x, 0) + ((svf_out(&C_VAF, &r->va_f, x, 1) * 3) >> 3);
             m += (y * r->gain[R_VIOLA]) >> 12;
         }
-        if (r->gain[R_VIOLIN]) {                /* 4' saw, bright and airy: 600 Hz off the bottom, 7 kHz on top */
+        if (r->gain[R_VIOLIN]) {                /* 4' saw, bright and airy: 600 Hz off the bottom, 5 kHz on top */
             x = svf_out(&C_VIH, &r->vi_h, bus[3][i], 2);
             y = svf_out(&C_VI, &r->vi, x, 0);
             m += (y * r->gain[R_VIOLIN]) >> 12;
@@ -546,8 +553,8 @@ static void regs_render(part_t *g, uint32_t n, int32_t *dst)
             y = svf_out(&C_HO, &r->ho, bus[4][i], 0);
             m += (y * r->gain[R_HORN]) >> 12;
         }
-        m = (m * 11) >> 7;                      /* x 0.086: a five-note chord on two registers peaks near -6 dBFS */
-        m = clampi(m, -140000, 140000);
+        m = (m * 11) >> 5;                      /* x 0.34 (the keyers come in at a quarter): a five-note chord on two registers peaks near -6 dBFS */
+        m = clampi(m, -120000, 120000);
         m = svf_out(&g->tone_c, &r->tone, m, 0);   /* TONE */
         if (wq) m = softclip(((m >> 3) * wq) >> 9) << 1;   /* WARMTH: into the tanh and out again */
         if (bq) {                               /* BRIGHT: a presence lift above ~3 kHz */
@@ -663,12 +670,12 @@ static void engine_init(void)
     for (v = 0; v < NV; v++) vc[v].noise = 0x12345678u * (v + 1u) + 0x9E3779B9u;
     coef_fixed(&C_CB, G_900, 4900);             /* k 1.2: a small bump at the corner */
     coef_fixed(&C_CE, G_1800, 5793);
-    coef_fixed(&C_CEF, G_400, 2048);            /* a body resonance */
+    coef_fixed(&C_CEF, G_400, 3000);            /* a body resonance */
     coef_fixed(&C_VAH, G_250, 5793);
-    coef_fixed(&C_VA, G_3500, 4500);
-    coef_fixed(&C_VAF, G_1200, 1800);           /* the viola's formant */
+    coef_fixed(&C_VA, G_2500, 5793);
+    coef_fixed(&C_VAF, G_1200, 2600);           /* the viola's formant */
     coef_fixed(&C_VIH, G_600, 5793);
-    coef_fixed(&C_VI, G_7000, 4000);
+    coef_fixed(&C_VI, G_5000, 5793);
     coef_fixed(&C_TR, G_1500, 2500);
     coef_fixed(&C_TRL, G_2500, 5793);
     coef_fixed(&C_HO, G_600, 6500);

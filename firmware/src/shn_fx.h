@@ -71,7 +71,7 @@ static inline int32_t tri_q(uint32_t ph)        /* a triangle -2048..2047 (so Q8
 /* ---- the state */
 static line_t ens, dl, dr, rv_pre, rv_in[4], rv_ap1, rv_d1, rv_ap2, rv_d2, rv_ap3, rv_d3, rv_ap4, rv_d4;
 static uint32_t ens_ph_s, ens_ph_f, ens_inc_s, ens_inc_f, ens_mode, rv_ph1, rv_ph2;
-static int32_t ens_depth_s, ens_depth_f, ens_mix, ens_lp, dly_mix, rev_mix, dly_fb, dly_tone_k, rev_decay, rev_damp_k;
+static int32_t ens_depth_s, ens_depth_f, ens_mix, ens_lp, ens_lpl, ens_lpr, dly_mix, rev_mix, dly_fb, dly_tone_k, rev_decay, rev_damp_k;
 /* the phaser: six first-order allpasses a channel, the LFO a quarter turn apart left and right */
 static int32_t pha_x[2][6], pha_y[2][6], pha_fb_s[2], pha_mix, pha_fb, pha_depth;
 static uint32_t pha_ph, pha_inc, ens_active, pha_active;
@@ -108,7 +108,7 @@ static void fx_block(const patch_t *p, uint32_t quarter)
     ens_inc_s = (uint32_t)((58435u * (uint32_t)t) >> 10);   /* 0.6 Hz in 2^32 / 44100 steps */
     ens_inc_f = (uint32_t)((584350u * (uint32_t)t) >> 10);  /* 6.0 Hz */
     d = p->v[P_ENS_DEPTH]; ens_depth_s = (d * d * 11) >> 9;   /* x the sine's Q15 = Q16 samples: up to +-3.9 ms at 127 */
-    ens_depth_f = ens_depth_s / 9;
+    ens_depth_f = ens_depth_s / 5;              /* the fast shimmer at a fifth: the creamy part */
     ens_mode = p->v[P_ENS_MODE] % NENS;
     ens_mix = ens_mode == E_OFF ? 0 : (p->v[P_ENS_MIX] * 256) >> 7;   /* Q8, up to 1.0 = the lines only, as the originals */
     if (ens_mix) ens_active = 2u * FS; else if (ens_active > HALF_FRAMES) ens_active -= HALF_FRAMES; else ens_active = 0;
@@ -201,7 +201,7 @@ static void fx_process(int32_t *out, uint32_t n)
         if (do_ens) {                           /* three lines, 120 degrees apart on both LFOs, read with Hermite taps */
             int32_t m = (l + r) >> 1, t0, t1, t2, w0, w1, w2;
             uint32_t ps = ens_ph_s >> 24, pf = ens_ph_f >> 24;
-            ens_lp += ((m - ens_lp) * 24000) >> 15;   /* the bucket brigade's input filter: ~9 kHz */
+            ens_lp += ((m - ens_lp) * 20000) >> 15;   /* the bucket brigade's input filter: ~7 kHz */
             line_write(&ens, ens_lp);
             w0 = (ENS_BASE << 16) + SIN_Q15[ps] * ens_depth_s + SIN_Q15[pf] * ens_depth_f;
             w1 = (ENS_BASE << 16) + SIN_Q15[(ps + 85u) & 255u] * ens_depth_s + SIN_Q15[(pf + 85u) & 255u] * ens_depth_f;
@@ -211,16 +211,21 @@ static void fx_process(int32_t *out, uint32_t n)
             t0 = line_read_q16_h(&ens, w0);
             t1 = line_read_q16_h(&ens, w1);
             t2 = line_read_q16_h(&ens, w2);
-            if (ens_mode == E_MONO) {           /* one output, as the originals: the three summed */
-                int32_t w = ((t0 + t1 + t2) * 11) >> 5;
-                l += ((w - l) * em) >> 8;
-                r += ((w - r) * em) >> 8;
-            } else if (ens_mode == E_STEREO) {  /* line 1 left, 3 right, 2 in the middle */
-                l += (((t0 + (t1 >> 1)) * 22 >> 5) - l) * em >> 8;
-                r += (((t2 + (t1 >> 1)) * 22 >> 5) - r) * em >> 8;
-            } else {                            /* WIDE: 1 and 2 left, 3 and 1 inverted right: the widest field */
-                l += (((t0 + t1) * 11 >> 4) - l) * em >> 8;
-                r += (((t2 + t1 - (t0 >> 1)) * 11 >> 4) - r) * em >> 8;
+            {
+                int32_t wl, wr;
+                if (ens_mode == E_MONO) {       /* one output, as the originals: the three summed */
+                    wl = wr = ((t0 + t1 + t2) * 11) >> 5;
+                } else if (ens_mode == E_STEREO) {   /* line 1 left, 3 right, 2 in the middle */
+                    wl = (t0 + (t1 >> 1)) * 22 >> 5;
+                    wr = (t2 + (t1 >> 1)) * 22 >> 5;
+                } else {                        /* WIDE: 1 and 2 left, 3 and 1 inverted right: the widest field */
+                    wl = (t0 + t1) * 11 >> 4;
+                    wr = (t2 + t1 - (t0 >> 1)) * 11 >> 4;
+                }
+                ens_lpl += ((wl - ens_lpl) * 20000) >> 15;   /* the brigade's reconstruction filter: ~7 kHz, the cream */
+                ens_lpr += ((wr - ens_lpr) * 20000) >> 15;
+                l += ((ens_lpl - l) * em) >> 8;
+                r += ((ens_lpr - r) * em) >> 8;
             }
         }
         if (do_pha) {                           /* six allpasses a side, swept together, the right a quarter turn on */
