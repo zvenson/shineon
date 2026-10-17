@@ -62,6 +62,14 @@ static inline __attribute__((always_inline)) int32_t ap_mod(line_t *l, int32_t i
     line_write(l, v);
     return d + ((v * g) >> 15);
 }
+/* a sine, Q15, interpolated between the table's 256 steps (a plain lookup stepped the ensemble's lines by
+ * samples: it crackled) */
+static inline __attribute__((always_inline)) int32_t sin_q15(uint32_t ph)
+{
+    uint32_t i = ph >> 24, f = (ph >> 16) & 255u;
+    int32_t a = SIN_Q15[i], b = SIN_Q15[(i + 1u) & 255u];
+    return a + (((b - a) * (int32_t)f) >> 8);
+}
 static inline int32_t tri_q(uint32_t ph)        /* a triangle -2048..2047 (so Q8 = +-8 samples) */
 {
     int32_t t = (int32_t)(ph >> 19);            /* 0..8191 */
@@ -200,12 +208,12 @@ static void fx_process(int32_t *out, uint32_t n)
         int32_t l = out[2u * i], r = out[2u * i + 1u];
         if (do_ens) {                           /* three lines, 120 degrees apart on both LFOs, read with Hermite taps */
             int32_t m = (l + r) >> 1, t0, t1, t2, w0, w1, w2;
-            uint32_t ps = ens_ph_s >> 24, pf = ens_ph_f >> 24;
+            uint32_t ps = ens_ph_s, pf = ens_ph_f;
             ens_lp += ((m - ens_lp) * 20000) >> 15;   /* the bucket brigade's input filter: ~7 kHz */
             line_write(&ens, ens_lp);
-            w0 = (ENS_BASE << 16) + SIN_Q15[ps] * ens_depth_s + SIN_Q15[pf] * ens_depth_f;
-            w1 = (ENS_BASE << 16) + SIN_Q15[(ps + 85u) & 255u] * ens_depth_s + SIN_Q15[(pf + 85u) & 255u] * ens_depth_f;
-            w2 = (ENS_BASE << 16) + SIN_Q15[(ps + 171u) & 255u] * ens_depth_s + SIN_Q15[(pf + 171u) & 255u] * ens_depth_f;
+            w0 = (ENS_BASE << 16) + sin_q15(ps) * ens_depth_s + sin_q15(pf) * ens_depth_f;
+            w1 = (ENS_BASE << 16) + sin_q15(ps + 0x55555555u) * ens_depth_s + sin_q15(pf + 0x55555555u) * ens_depth_f;
+            w2 = (ENS_BASE << 16) + sin_q15(ps + 0xAAAAAAAAu) * ens_depth_s + sin_q15(pf + 0xAAAAAAAAu) * ens_depth_f;
             ens_ph_s += ens_inc_s;
             ens_ph_f += ens_inc_f;
             t0 = line_read_q16_h(&ens, w0);
