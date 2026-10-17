@@ -1,0 +1,45 @@
+# Shine On: a chord on program 1 (ENSEMBLE), then the full strings, the brass, the phased pad. Keys = F3 .. G5 (bit 0 = F3)
+3000 shot
+3000 midi 0x90 48 100
+3000 midi 0x90 55 100
+3000 midi 0x90 60 100
+3000 midi 0x90 64 100
+3000 midi 0x90 67 100
+6500 midi 0x80 48 0
+6500 midi 0x80 55 0
+6500 midi 0x80 60 0
+6500 midi 0x80 64 0
+6500 midi 0x80 67 0
+# program 2: FULL STR (PRESETS +1)
+8000 enc 6 1
+8200 shot
+8500 midi 0x90 41 100
+8500 midi 0x90 60 100
+8500 midi 0x90 65 100
+8500 midi 0x90 69 100
+12000 midi 0x80 41 0
+12000 midi 0x80 60 0
+12000 midi 0x80 65 0
+12000 midi 0x80 69 0
+# program 9: BRASS
+13500 enc 6 7
+13700 shot
+14000 midi 0x90 50 110
+14000 midi 0x90 57 110
+14000 midi 0x90 62 110
+16000 midi 0x80 50 0
+16000 midi 0x80 57 0
+16000 midi 0x80 62 0
+# program 3: SHINE PAD
+17000 enc 6 -6
+17500 btn 9
+17700 shot
+18000 midi 0x90 45 90
+18000 midi 0x90 52 90
+18000 midi 0x90 60 90
+18000 midi 0x90 63 90
+24000 midi 0x80 45 0
+24000 midi 0x80 52 0
+24000 midi 0x80 60 0
+24000 midi 0x80 63 0
+28000 end
