@@ -143,15 +143,18 @@ static void voice_start(voice_t *v, uint32_t part, uint32_t note, uint32_t vel)
     v->low = (uint8_t)(pv[P_SPLIT] && note < 36u + pv[P_SPLIT]);
     v->target16 = (int32_t)note << 16;
     v->pitch16 = pv[P_GLIDE] ? pt[part].last_pitch16 : v->target16;
-    v->ae.stage = E_ATT;
     v->lfo_blk = 0;
     v->lfo_fade = pv[P_LFO_DELAY] ? 0 : 32767;
-    /* the footages start locked, as a divider's: 16' at half the 8' phase, 4' at twice, the square with the 8' */
-    v->o8.ph = xorshift(&v->noise);
-    v->o16.ph = v->o8.ph >> 1;
-    v->o4.ph = v->o8.ph << 1;
-    v->osq.ph = v->o8.ph;
-    v->o16.prev = v->o8.prev = v->o4.prev = v->osq.prev = 0;
+    if (v->ae.stage == E_IDLE) {                /* a silent keyer: the footages start locked, as a divider's (16' at half
+                                                 * the 8' phase, 4' at twice, the square with the 8'). One still sounding
+                                                 * (the key again, a stolen keyer) keeps its phases: no click */
+        v->o8.ph = xorshift(&v->noise);
+        v->o16.ph = v->o8.ph >> 1;
+        v->o4.ph = v->o8.ph << 1;
+        v->osq.ph = v->o8.ph;
+        v->o16.prev = v->o8.prev = v->o4.prev = v->osq.prev = 0;
+    }
+    v->ae.stage = E_ATT;
 }
 
 /* round robin over the 16 keyers; steal the oldest released, then the oldest */
@@ -553,7 +556,8 @@ static void regs_render(part_t *g, uint32_t n, int32_t *dst)
             y = svf_out(&C_HO, &r->ho, bus[4][i], 0);
             m += (y * r->gain[R_HORN]) >> 12;
         }
-        m = (m * 11) >> 5;                      /* x 0.34 (the keyers come in at a quarter): a five-note chord on two registers peaks near -6 dBFS */
+        m = (m * 9) >> 5;                       /* x 0.28 (the keyers come in at a quarter): a five-note chord on two registers
+                                                 * drives the output stage's tanh to ~0.7 (-4 dBFS): it stays open, not squashed */
         m = clampi(m, -120000, 120000);
         m = svf_out(&g->tone_c, &r->tone, m, 0);   /* TONE */
         if (wq) m = softclip(((m >> 3) * wq) >> 9) << 1;   /* WARMTH: into the tanh and out again */

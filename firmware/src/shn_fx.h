@@ -79,7 +79,7 @@ static inline int32_t tri_q(uint32_t ph)        /* a triangle -2048..2047 (so Q8
 /* ---- the state */
 static line_t ens, dl, dr, rv_pre, rv_in[4], rv_ap1, rv_d1, rv_ap2, rv_d2, rv_ap3, rv_d3, rv_ap4, rv_d4;
 static uint32_t ens_ph_s, ens_ph_f, ens_inc_s, ens_inc_f, ens_mode, rv_ph1, rv_ph2;
-static int32_t ens_depth_s, ens_depth_f, ens_mix, ens_lp, ens_lpl, ens_lpr, dly_mix, rev_mix, dly_fb, dly_tone_k, rev_decay, rev_damp_k;
+static int32_t ens_depth_s, ens_depth_f, ens_mix, ens_lp, ens_lp2, ens_lpl, ens_lpl2, ens_lpr, ens_lpr2, ens_cur_s, ens_cur_f, dly_mix, rev_mix, dly_fb, dly_tone_k, rev_decay, rev_damp_k;
 /* the phaser: six first-order allpasses a channel, the LFO a quarter turn apart left and right */
 static int32_t pha_x[2][6], pha_y[2][6], pha_fb_s[2], pha_mix, pha_fb, pha_depth;
 static uint32_t pha_ph, pha_inc, ens_active, pha_active;
@@ -209,11 +209,14 @@ static void fx_process(int32_t *out, uint32_t n)
         if (do_ens) {                           /* three lines, 120 degrees apart on both LFOs, read with Hermite taps */
             int32_t m = (l + r) >> 1, t0, t1, t2, w0, w1, w2;
             uint32_t ps = ens_ph_s, pf = ens_ph_f;
-            ens_lp += ((m - ens_lp) * 20000) >> 15;   /* the bucket brigade's input filter: ~7 kHz */
-            line_write(&ens, ens_lp);
-            w0 = (ENS_BASE << 16) + sin_q15(ps) * ens_depth_s + sin_q15(pf) * ens_depth_f;
-            w1 = (ENS_BASE << 16) + sin_q15(ps + 0x55555555u) * ens_depth_s + sin_q15(pf + 0x55555555u) * ens_depth_f;
-            w2 = (ENS_BASE << 16) + sin_q15(ps + 0xAAAAAAAAu) * ens_depth_s + sin_q15(pf + 0xAAAAAAAAu) * ens_depth_f;
+            ens_lp += ((m - ens_lp) * 22000) >> 15;   /* the bucket brigade's input filter: two poles at ~8 kHz */
+            ens_lp2 += ((ens_lp - ens_lp2) * 22000) >> 15;
+            line_write(&ens, ens_lp2);
+            if (ens_cur_s < ens_depth_s) ens_cur_s++; else if (ens_cur_s > ens_depth_s) ens_cur_s--;   /* DEPTH turned: the lines glide there */
+            if (ens_cur_f < ens_depth_f) ens_cur_f++; else if (ens_cur_f > ens_depth_f) ens_cur_f--;
+            w0 = (ENS_BASE << 16) + sin_q15(ps) * ens_cur_s + sin_q15(pf) * ens_cur_f;
+            w1 = (ENS_BASE << 16) + sin_q15(ps + 0x55555555u) * ens_cur_s + sin_q15(pf + 0x55555555u) * ens_cur_f;
+            w2 = (ENS_BASE << 16) + sin_q15(ps + 0xAAAAAAAAu) * ens_cur_s + sin_q15(pf + 0xAAAAAAAAu) * ens_cur_f;
             ens_ph_s += ens_inc_s;
             ens_ph_f += ens_inc_f;
             t0 = line_read_q16_h(&ens, w0);
@@ -230,10 +233,12 @@ static void fx_process(int32_t *out, uint32_t n)
                     wl = (t0 + t1) * 11 >> 4;
                     wr = (t2 + t1 - (t0 >> 1)) * 11 >> 4;
                 }
-                ens_lpl += ((wl - ens_lpl) * 20000) >> 15;   /* the brigade's reconstruction filter: ~7 kHz, the cream */
-                ens_lpr += ((wr - ens_lpr) * 20000) >> 15;
-                l += ((ens_lpl - l) * em) >> 8;
-                r += ((ens_lpr - r) * em) >> 8;
+                ens_lpl += ((wl - ens_lpl) * 22000) >> 15;   /* the brigade's reconstruction filter: two poles at ~8 kHz, the cream */
+                ens_lpl2 += ((ens_lpl - ens_lpl2) * 22000) >> 15;
+                ens_lpr += ((wr - ens_lpr) * 22000) >> 15;
+                ens_lpr2 += ((ens_lpr - ens_lpr2) * 22000) >> 15;
+                l += ((ens_lpl2 - l) * em) >> 8;
+                r += ((ens_lpr2 - r) * em) >> 8;
             }
         }
         if (do_pha) {                           /* six allpasses a side, swept together, the right a quarter turn on */

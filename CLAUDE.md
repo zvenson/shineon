@@ -37,8 +37,13 @@ engine and the ensemble are new. GPL-3.0. Identity `FM-1_96N`. Name by the user 
   1.0 = lines only (the originals had no dry path). Phaser: 6 first-order allpasses a side, coefficient from
   PHA_A_Q15 (120 Hz .. 6 kHz) by a triangle, the right a quarter turn on, feedback. Delay and reverb are
   OberVave's. The FX layer's knobs: ENS MIX, PHASER MIX, DELAY MIX, REVERB MIX.
-- Levels: a five-note chord on VIOLA + VIOLIN peaks ~-4 dBFS, RMS ~-18 dBFS (tests/strings.txt). Host cost
-  ~1640 instr/sample on that script (OberVave's worst was ~1900).
+- Levels: a five-note chord on VIOLA + VIOLIN peaks ~-5 dBFS, RMS ~-19 dBFS (tests/strings.txt); the keyers go into
+  the busses at a quarter, the register sum is x 0.28, so 16 keyers stay within the filters' 32-bit products and
+  the output tanh is driven to ~0.7 at most. Host cost ~1720 instr/sample on that script (OberVave's worst ~1900).
+- Lessons (17.10., the user heard crackle on the VIBE): the ensemble's LFO sine MUST be interpolated (sin_q15; the
+  plain 256-step table jumped the lines by samples); the registers use a linear SVF (svf_out), not shn_dsp.h's
+  saturating one; a keyer still sounding keeps its phases on a retrigger / steal; DEPTH glides (ens_cur_s/f).
+  Measure cleanliness as HF energy > 10 kHz per 10 ms window over the WHOLE file (filter first, then slice).
 - Settings: `SET_VERSION 0x53` and `PS_TAG "SHNP"`, so an OberVave store on the same FM-1 is not read as ours.
   The 8 pattern sectors are shared with OberVave's layout (same `pattern_t`): a pattern made in OberVave loads.
 - `tools/gen_tables.py` -> `firmware/gen/shn_tables.h` (committed): OberVave's tables plus SIN_Q15, PHA_A_Q15,
