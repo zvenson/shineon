@@ -15,7 +15,7 @@ engine and the ensemble are new. GPL-3.0. Identity `FM-1_96N`. Name by the user 
   0xFFC00000-0xFFD00000 (`tools/build.py` checks). RAM <= 96 KB, big buffers in `.pool`.
 - Audio ISR: 256 frames per call at 44.1 kHz (5.8 ms). The user's priority is **sound quality over CPU**; measure
   on the device (GLOBAL page title) before trading any of it away.
-- The identity prefix is `FM-1_96`: release X.Y gives FM-1_96Y. **Never release a 1.1**: FM-1_961 is FOMAJAM's.
+- The identity prefix is `FM-1_96`: release X.Y gives FM-1_96Y. **Never release a 1.1 or a 1.6**: FM-1_961 is FOMAJAM's, FM-1_966 GR!MM's (both on the hub).
 
 ## Where things are
 
@@ -56,5 +56,6 @@ engine and the ensemble are new. GPL-3.0. Identity `FM-1_96N`. Name by the user 
 
 ## Status
 
-1.0 (2026-10-17): host-tested, device build passes (image 123 KB, RAM 41 KB, pool 284 KB), **not yet tried on an
-FM-1**. The SMK-37 build compiles with OberVave's layer but is untested.
+1.0 (2026-10-17): host-tested, device build passes (image 123 KB, RAM 41 KB, pool 284 KB).
+1.2 (2026-10-18, FM-1_962): 1.0's sound fixes released (LFO interpolation, clean register filters, phases kept on a
+retrigger, two-pole BBD filter); on the hub. Host, OTA and loader tests pass; **not yet tried on an FM-1**. The SMK-37 build compiles with OberVave's layer but is untested.

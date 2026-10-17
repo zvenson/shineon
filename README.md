@@ -14,8 +14,8 @@ arpeggiator, a two-track step sequencer with a sound of its own on track B, all 
 
 <p align="center"><img src="docs/screen.png" width="240" alt="Shine On's screen: program 01 ENSEMBLE, the PERFORM page with four knobs, the scope, sixteen keyer LEDs"></p>
 
-> **Status: 1.0, built for the FM-1 (identity `FM-1_960`), tested on the host and in the browser.** Install it from
-> [thefirmwarehub.com](https://thefirmwarehub.com) or with `tools/fm1_install.py docs/firmware/shineon-1.0.fwsc`.
+> **Status: 1.2, built for the FM-1 (identity `FM-1_962`), tested on the host and in the browser.** Install it from
+> [thefirmwarehub.com](https://thefirmwarehub.com) or with `tools/fm1_install.py docs/firmware/shineon-1.2.fwsc`.
 
 **Play it in your browser:** `docs/sim/` is the firmware itself (the same C sources, compiled to WebAssembly) with
 the FM-1's screen, keys, buttons and knobs, your computer keyboard or a MIDI keyboard. Build it with
@@ -132,7 +132,7 @@ tests/run_host.sh                 # the synth on your computer: build/host/shine
 tests/run_host.sh tests/strings.txt   # a script of keys / buttons / knob turns / MIDI over time (tests/host.c explains)
 sh web/sim/build.sh               # the browser simulator: docs/sim (zig cc + wasm-opt), node tests/sim_test.mjs
 ./build.sh                        # the device package: build/shineon.fwsc
-./build.sh --release 1.0          # -> build/shineon-1.0.fwsc, identity FM-1_960
+./build.sh --release 1.2          # -> build/shineon-1.2.fwsc, identity FM-1_962
 python3 tools/fm1_install.py build/shineon.fwsc   # onto the FM-1 over USB
 ```
 
