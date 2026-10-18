@@ -1,11 +1,11 @@
-# a test of the shared workflow (zvenson/zp12 fm1-build), on this branch only
+# a test of the shared workflow (zvenson/fm1-build), on this branch only
 name: shared-test
 on:
   push:
     branches: [fm1-build-test]
 jobs:
   build:
-    uses: zvenson/zp12/.github/workflows/fm1-build.yml@fm1-build-v1
+    uses: zvenson/fm1-build/.github/workflows/build.yml@v1
     permissions:
       contents: write
       id-token: write
