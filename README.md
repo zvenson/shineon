@@ -14,9 +14,10 @@ arpeggiator, a two-track step sequencer with a sound of its own on track B, all 
 
 <p align="center"><img src="docs/screen.png" width="240" alt="Shine On's screen: program 01 ENSEMBLE, the PERFORM page with four knobs, the scope, sixteen keyer LEDs"></p>
 
-> **Status: 1.2.2, built for the FM-1 (identity `FM-1_962`), tested on the host and in the browser.** Install it from
-> [thefirmwarehub.com](https://thefirmwarehub.com) or with `tools/fm1_install.py docs/firmware/shineon-1.2.2.fwsc`.
-> 1.2.2 opens the FM-1's **TRS MIDI IN** jack: a keyboard, a drum machine or a sequencer through a TRS-to-DIN adapter
+> **Status: 1.2.3, built for the FM-1 (identity `FM-1_962`), tested on the host, in the browser and on an FM-1.** Install it from
+> [thefirmwarehub.com](https://thefirmwarehub.com) or with `tools/fm1_install.py docs/firmware/shineon-1.2.3.fwsc`.
+> 1.2.3: the update loader shows what it does (UPDATE MODE with a running light while it waits, WRITING with 20 segments
+> and the percent, UPDATE FAILED), in the Firmware Hub's look, as OberVave's; the idea from Skiff. 1.2.2 opened the FM-1's **TRS MIDI IN** jack: a keyboard, a drum machine or a sequencer through a TRS-to-DIN adapter
 > plays Shine On (notes, CC, program change, clock, start / stop; if nothing plays, try the other adapter type, A or B).
 > Before, only USB-MIDI reached it. The keys now send their notes on the MIDI channel set (they always went out on
 > channel 1).

@@ -31,6 +31,8 @@ $CC -o "$OUT/ota_test" tests/ota_test.c
 run "M-UPGRADE entry (FM-1)" "$OUT/ota_test" build/shineon.fwsc
 head -c 60000 build/shineon.bin > "$OUT/old_app.bin"
 python3 tools/fm1pkg_make.py "$OUT/old_app.bin" build/loader/ota.bin "$OUT/old.fwsc" >/dev/null
+$CC -o "$OUT/ldr_screen_test" tests/ldr_screen_test.c
+run "update loader's screen: UPDATE MODE with its light, WRITING with the segments and the percent, UPDATE FAILED" "$OUT/ldr_screen_test" "$OUT"
 $CC -o "$OUT/ldr_test" tests/ldr_test.c
 run "update loader (FM-1): other app -> this build" "$OUT/ldr_test" "$OUT/old.fwsc" build/shineon.fwsc
 
