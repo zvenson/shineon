@@ -103,11 +103,14 @@ static volatile uint32_t fm1_ms;                /* milliseconds since power-on (
 #ifndef FELUCCA_UAC
 #define FELUCCA_UAC 1                           /* USB audio to the computer (-DFELUCCA_UAC=0: MIDI only, as zp12) */
 #endif
-#define FELUCCA_UART 0                          /* (SMK-37: there is no TRS MIDI IN, PH8 is a key-matrix row: keep it 0) */
+#define FELUCCA_UART (!BOARD_SMK37)             /* the FM-1's TRS MIDI IN (SMK-37: none, PH8 is a key-matrix row) */
 #if BOARD_SMK37 && FELUCCA_UART
 #error "BOARD_SMK37: no UART MIDI IN (RX on PH8, a key-matrix row on the SMK)"
 #endif
 #include "usb.c"
+#if FELUCCA_UART
+#include "midi_uart.c"                          /* (sloopDX's, after Felucca Salt: the ring read by content) */
+#endif
 #if FELUCCA_UAC
 #define UAC_ONLY(x) x
 #else
@@ -322,13 +325,22 @@ void fm1_timer5_irq(void)
         fm1_ms++;
     }
     if (usb_due)
-        owed = 1;
+        owed |= 1u;
+#if FELUCCA_UART
+    if (sub % 5u == 2u)
+        owed |= 2u;                             /* 2 kHz: <= ~7 bytes per call at 31250 baud */
+#endif
     if (++sub == 10u)
         sub = 0;
 #if !FELUCCA_UAC                                /* MIDI only: the USB poll keeps its 2 kHz, nested in a render too (as zp12,
                                                    whose MIDI out works on the device; OberVave's babbled with the poll put off) */
     if (usb_due)
         usb_poll();
+#if FELUCCA_UART
+    if (owed & 2u)
+        uart_midi_poll();
+#endif
+    owed = 0;
     return;
 #endif
     if (in_audio) {
@@ -336,8 +348,12 @@ void fm1_timer5_irq(void)
             UAC_ONLY(uac_service());
         return;
     }
-    if (owed)
+    if (owed & 1u)
         usb_poll();
+#if FELUCCA_UART
+    if (owed & 2u)
+        uart_midi_poll();
+#endif
     owed = 0;
 }
 extern void isr_timer5(void);
@@ -467,6 +483,9 @@ void fm1_cstart(void)
 #endif
     fm1_audio_init(abuf, HALF_WORDS, isr_alnk0, 3);   /* (abuf is zero: .bss) */
     usb_start();
+#if FELUCCA_UART
+    uart_midi_init();                           /* before TIMER5: PORTH read-modify-write */
+#endif
     fm1_timer5_start(isr_timer5, 4);
     fm1_guard_lock_top();
     fm1_irq_enable_all();

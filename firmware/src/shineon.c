@@ -43,6 +43,7 @@ static struct {
     int8_t tune, oct;
     uint8_t pat, click;                         /* pat: the sequencer pattern (its own sectors); click: CLICK_* */
 } set;
+#define MIDI_OUT_CH (set.midi_ch ? set.midi_ch - 1u : 0u)   /* the keys go out on the MIDI channel set (OMNI: 1) */
 static uint32_t set_dirty, set_t;
 /* the user's programs: PS_N to a flash sector (psect_load / psect_save), all of them in RAM */
 #define PS_N 50u
@@ -1303,7 +1304,7 @@ static void keys_in(uint32_t notes_only)
                     else { msg[0] = 0; scat(msg, "PATTERN "); fmt_u(msg + slen(msg), set.pat + 1u); say(msg); }
                 } else if (KEY_PAGE[k] >= 0) pat_copy((uint32_t)KEY_PAGE[k]);
             } else {
-                play_note(1, held_key[k], KEY_VEL(k)); midi_send(0x90, held_key[k], KEY_VEL(k));
+                play_note(1, held_key[k], KEY_VEL(k)); midi_send(0x90u | MIDI_OUT_CH, held_key[k], KEY_VEL(k));
                 if (rec_keys()) rec_note(1, held_key[k], KEY_VEL(k));
                 pen_add(held_key[k]);
                 entry_note(1, held_key[k], KEY_VEL(k));   /* the full-screen sequencer: into the cursor's step */
@@ -1318,7 +1319,7 @@ static void keys_in(uint32_t notes_only)
             if (key_step[k] == 2u) erase_on[(uint32_t)clampi((int32_t)held_key[k] - pat.trk[seq_trk].transp, 1, 127)] = 0;
             else if (key_step[k] == 1u) seq_key_up(k);
             else if (key_step[k] == 0u) {
-                play_note(0, held_key[k], 0); midi_send(0x80, held_key[k], 0);
+                play_note(0, held_key[k], 0); midi_send(0x80u | MIDI_OUT_CH, held_key[k], 0);
                 if (rec_keys()) rec_note(0, held_key[k], 0);
                 if (notes_down) notes_down--;
                 entry_note(0, held_key[k], 0);

@@ -84,7 +84,7 @@ static void smk_pads(uint32_t base, uint32_t *dirty)
                     uint32_t n = q < (pen_n ? pen_n : 1u) ? (pen_n ? pen_chord[q] : pen) : 0u;
                     smk_live[p][q] = (uint8_t)n;
                     if (!n) continue;
-                    play_note(1, n, vel); midi_send(0x90, n, vel);
+                    play_note(1, n, vel); midi_send(0x90u | MIDI_OUT_CH, n, vel);
                     if (rec_keys()) rec_note(1, n, vel);
                 }
             } else {                                /* a step: as its white key in the SEQ layer */
@@ -106,7 +106,7 @@ static void smk_pads(uint32_t base, uint32_t *dirty)
                 uint32_t n = smk_live[p][q];
                 smk_live[p][q] = 0;
                 if (!n) continue;
-                play_note(0, n, 0); midi_send(0x80, n, 0);
+                play_note(0, n, 0); midi_send(0x80u | MIDI_OUT_CH, n, 0);
                 if (rec_keys()) rec_note(0, n, 0);
             }
         }
@@ -124,7 +124,7 @@ static void smk_pads(uint32_t base, uint32_t *dirty)
                 erase_note(n);
                 say("ERASED");
             } else {
-                play_note(1, n, vel); midi_send(0x90, n, vel);
+                play_note(1, n, vel); midi_send(0x90u | MIDI_OUT_CH, n, vel);
                 if (rec_keys()) rec_note(1, n, vel);
                 pen_add(n);
             }
@@ -133,7 +133,7 @@ static void smk_pads(uint32_t base, uint32_t *dirty)
             smk_ext_note[kk] = 0;
             if (smk_ext_erase[kk]) erase_on[(uint32_t)clampi((int32_t)n - pat.trk[seq_trk].transp, 1, 127)] = 0;
             else {
-                play_note(0, n, 0); midi_send(0x80, n, 0);
+                play_note(0, n, 0); midi_send(0x80u | MIDI_OUT_CH, n, 0);
                 if (rec_keys()) rec_note(0, n, 0);
                 if (notes_down) notes_down--;
             }
