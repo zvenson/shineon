@@ -16,8 +16,8 @@ compressor); the tracks start and stop on the bar, every pattern keeps its sound
 
 <p align="center"><img src="docs/screen.png" width="240" alt="Shine On's screen: program 01 ENSEMBLE, the PERFORM page with four knobs, the scope, sixteen keyer LEDs"></p>
 
-> **Status: 3.0 is the source on the `v3` branch, not yet tried on an FM-1; the package on the hub is 1.2.3**
-> (`docs/firmware/shineon-1.2.3.fwsc`, identity `FM-1_962`) until 3.0 is released. 3.0 is OberVave 3.0's four
+> **Released: 3.0** (`docs/firmware/shineon-3.0.fwsc`, identity `FM-1_960`; on the Firmware Hub, built and signed by
+> this repository's workflow). 3.0 is OberVave 3.0's four
 > tracks, mixer and sequencer with Shine On's engine: 1.x's settings and patterns come over on the first start (the old
 > patterns stay in the flash). Four full string sounds at once cost about twice the CPU of one: watch the time on the
 > GLOBAL page.
