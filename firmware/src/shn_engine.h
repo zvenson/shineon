@@ -166,10 +166,36 @@ static void voice_start(voice_t *v, uint32_t part, uint32_t note, uint32_t vel)
 }
 
 /* round robin over the 16 keyers; steal the oldest released, then the oldest */
+/* the CPU guard (the device only: app_audio measures each half): when a half takes too long, fewer keyers may sound
+ * (the oldest go), so four big sounds at once never take the chip down; with room again they come back one by one */
+static uint32_t eng_kmax = NV;
+static void cpu_guard(uint32_t us)
+{
+    static uint32_t calm;
+    uint32_t v, n = 0;
+    if (us > 4000u) {                           /* (of 5800 us a half: the main loop needs the rest) */
+        calm = 0;
+        for (v = 0; v < NV; v++) n += vc[v].ae.stage != E_IDLE;
+        eng_kmax = n > 6u ? n - 1u : 6u;
+        while (n > eng_kmax) {                  /* the oldest sounding ones go now */
+            uint32_t pick = NV, best = 0xFFFFFFFFu;
+            for (v = 0; v < NV; v++)
+                if (vc[v].ae.stage != E_IDLE && vc[v].seq < best) { best = vc[v].seq; pick = v; }
+            if (pick == NV) break;
+            vc[pick].ae.stage = E_IDLE; vc[pick].ae.level = 0; vc[pick].gate = 0;
+            n--;
+        }
+    } else if (us < 3000u && eng_kmax < NV && ++calm >= 80u) {   /* (~0.5 s with room: one more) */
+        calm = 0;
+        eng_kmax++;
+    }
+}
+
 static uint32_t voice_alloc(void)
 {
-    uint32_t i, v, pick = 0, best = 0xFFFFFFFFu;
-    for (i = 0; i < NV; i++) {
+    uint32_t i, v, pick = 0, best = 0xFFFFFFFFu, n = 0;
+    for (v = 0; v < NV; v++) n += vc[v].ae.stage != E_IDLE;
+    for (i = 0; i < NV && n < eng_kmax; i++) {  /* (at the guard's limit: steal, as if all were busy) */
         v = (rr + i) % NV;
         if (vc[v].ae.stage == E_IDLE) { rr = v + 1u; return v; }
     }
@@ -178,6 +204,9 @@ static uint32_t voice_alloc(void)
     if (best == 0xFFFFFFFFu)
         for (v = 0; v < NV; v++)
             if (vc[v].seq < best) { best = vc[v].seq; pick = v; }
+    if (n >= eng_kmax && vc[pick].ae.stage == E_IDLE)   /* (stealing at the limit: a sounding one, not a quiet card) */
+        for (v = 0, best = 0xFFFFFFFFu; v < NV; v++)
+            if (vc[v].ae.stage != E_IDLE && vc[v].seq < best) { best = vc[v].seq; pick = v; }
     rr = pick + 1u;
     return pick;
 }
@@ -571,7 +600,8 @@ static void regs_render(part_t *g, uint32_t n, int32_t *dst)
     if (!any) return;
     for (i = 0; i < n; i++) {
         int32_t m = 0, x, y;
-        for (k = 0; k < NREG; k++) r->gain[k] += (g->reg_q12[k] - r->gain[k]) >> 7;   /* ~3 ms: no zipper on the knobs */
+        if (!(i & 15u))                         /* ~3 ms: no zipper on the knobs (a step every 16 samples) */
+            for (k = 0; k < NREG; k++) r->gain[k] += (g->reg_q12[k] - r->gain[k]) >> 3;
         if (r->gain[R_CBASS]) {                 /* 16' saw, round: a 2-pole at 900 Hz with a small bump */
             y = svf_out(&C_CB, &r->cb, bus[0][i], 0);
             m += (y * r->gain[R_CBASS]) >> 12;

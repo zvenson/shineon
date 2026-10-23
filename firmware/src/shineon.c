@@ -35,6 +35,7 @@ static void app_audio(int32_t *out, uint32_t n)
     engine_audio(out, n);
 #ifndef OBV_HOST
     ui_render_us = (fm1_ticks() - t0) / FM1_TICKS_PER_US;
+    cpu_guard(ui_render_us);                    /* (too long: fewer keyers, before the chip falls over) */
 #endif
 }
 

@@ -88,7 +88,15 @@ typedef struct {
     line_t l;
     uint32_t ph_s, ph_f, inc_s, inc_f, mode, active;
     int32_t depth_s, depth_f, mix, lp, lp2, lpl, lpl2, lpr, lpr2, cur_s, cur_f;
+    int32_t w[3], dw[3];                        /* the three lines' delays now (Q16) and their step a sample in this block */
+    uint32_t wok;                               /* w holds a value */
 } ens_t;
+static void ens_taps(const ens_t *e, int32_t *w)   /* the three delays at the LFOs' phases now (Q16 samples) */
+{
+    w[0] = (ENS_BASE << 16) + sin_q15(e->ph_s) * e->cur_s + sin_q15(e->ph_f) * e->cur_f;
+    w[1] = (ENS_BASE << 16) + sin_q15(e->ph_s + 0x55555555u) * e->cur_s + sin_q15(e->ph_f + 0x55555555u) * e->cur_f;
+    w[2] = (ENS_BASE << 16) + sin_q15(e->ph_s + 0xAAAAAAAAu) * e->cur_s + sin_q15(e->ph_f + 0xAAAAAAAAu) * e->cur_f;
+}
 static ens_t ensp[ENS_PARTS];
 /* the phaser: six first-order allpasses a channel, the LFO a quarter turn apart left and right */
 /* a sound's phaser: six allpasses a side, the sweep, the feedback */
@@ -231,22 +239,29 @@ static void ens_process(ens_t *e, int32_t *buf, uint32_t n)
     uint32_t i;
     int32_t em = e->mix;
     if (!e->active) return;
+    if (!e->wok) { ens_taps(e, e->w); e->wok = 1; }
     for (i = 0; i < n; i++) {                   /* three lines, 120 degrees apart on both LFOs, read with Hermite taps */
-        int32_t l = buf[2u * i], r = buf[2u * i + 1u], m = sat16(((l + r) >> 1) >> 1), t0, t1, t2, w0, w1, w2, wl, wr;
-        uint32_t ps = e->ph_s, pf = e->ph_f;
+        int32_t l = buf[2u * i], r = buf[2u * i + 1u], m = sat16(((l + r) >> 1) >> 1), t0, t1, t2, wl, wr;
+        if (!(i & 15u)) {                       /* the LFOs (6 Hz at most) a block of 16 ahead, the delays a line to there:
+                                                 * smooth, at a sixteenth of the sines' cost */
+            int32_t we[3], k;
+            uint32_t j;
+            for (j = 0; j < 16u; j++) {         /* DEPTH turned: the lines glide there */
+                if (e->cur_s < e->depth_s) e->cur_s++; else if (e->cur_s > e->depth_s) e->cur_s--;
+                if (e->cur_f < e->depth_f) e->cur_f++; else if (e->cur_f > e->depth_f) e->cur_f--;
+            }
+            e->ph_s += e->inc_s << 4;
+            e->ph_f += e->inc_f << 4;
+            ens_taps(e, we);
+            for (k = 0; k < 3; k++) e->dw[k] = (we[k] - e->w[k]) >> 4;
+        }
         e->lp += ((m - e->lp) * 22000) >> 15;   /* the bucket brigade's input filter: two poles at ~8 kHz */
         e->lp2 += ((e->lp - e->lp2) * 22000) >> 15;
         line_write(&e->l, e->lp2);
-        if (e->cur_s < e->depth_s) e->cur_s++; else if (e->cur_s > e->depth_s) e->cur_s--;   /* DEPTH turned: the lines glide there */
-        if (e->cur_f < e->depth_f) e->cur_f++; else if (e->cur_f > e->depth_f) e->cur_f--;
-        w0 = (ENS_BASE << 16) + sin_q15(ps) * e->cur_s + sin_q15(pf) * e->cur_f;
-        w1 = (ENS_BASE << 16) + sin_q15(ps + 0x55555555u) * e->cur_s + sin_q15(pf + 0x55555555u) * e->cur_f;
-        w2 = (ENS_BASE << 16) + sin_q15(ps + 0xAAAAAAAAu) * e->cur_s + sin_q15(pf + 0xAAAAAAAAu) * e->cur_f;
-        e->ph_s += e->inc_s;
-        e->ph_f += e->inc_f;
-        t0 = line_read_q16_h(&e->l, w0);
-        t1 = line_read_q16_h(&e->l, w1);
-        t2 = line_read_q16_h(&e->l, w2);
+        t0 = line_read_q16_h(&e->l, e->w[0]);
+        t1 = line_read_q16_h(&e->l, e->w[1]);
+        t2 = line_read_q16_h(&e->l, e->w[2]);
+        e->w[0] += e->dw[0]; e->w[1] += e->dw[1]; e->w[2] += e->dw[2];
         if (e->mode == E_MONO) {                /* one output, as the originals: the three summed */
             wl = wr = ((t0 + t1 + t2) * 11) >> 5;
         } else if (e->mode == E_STEREO) {       /* line 1 left, 3 right, 2 in the middle */
