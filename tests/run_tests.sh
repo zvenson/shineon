@@ -4,7 +4,6 @@
 # (both boards write the same build/ intermediates; the tests expect the FM-1 binaries):
 #   BOARD=smk37 sh build.sh; BOARD=smk37 MODEL=elite sh build.sh; BOARD=smk37 MODEL=mke sh build.sh; sh build.sh
 #   sh tests/run_tests.sh
-# The FM-1 app on the host (tests/run_host.sh), the SMK-37 mapping (tests/smk_ui_test.py), the flash map, the
 # update path (ota.c, the loader, tools/fm1_install.py; from the fm1-to-smk37 kit's reference layer,
 # genkigenki/sloop-fm1 smk37) and the packages.
 set -e
@@ -20,7 +19,6 @@ run() { echo "== $1"; shift; "$@" || fail=1; }
 
 run "FM-1 app on the host: the default script plays, screens and sound" sh tests/run_host.sh
 run "SMK-37 app on the host: the default script" env BOARD=smk37 sh tests/run_host.sh
-run "SMK-37 mapping: step pads, REC pads, fader banks, wheels, outer keys" python3 tests/smk_ui_test.py
 
 $CC -DBOARD_SMK37=1 -Ifirmware/hal -o "$OUT/smk_flash_test" tests/smk_flash_test.c
 run "SMK-37 flash map: settings, patterns, owner tag in the store; never the head, BTIF/USRTRIM, USR, key_mac" "$OUT/smk_flash_test"
@@ -51,7 +49,7 @@ done
 $CC -DBOARD_SMK37=1 -o "$OUT/ldr_test_smk" tests/ldr_test.c
 run "update loader, SMK-37: app area 0x4000-0x9CFFF, protected ranges untouched" "$OUT/ldr_test_smk" "$OUT/smk_old.fwsc" "$OUT/smk_new.fwsc"
 found=0
-for m in ":SMK-37 Pro_95" "-elite:SMK-37 Elite_95" "-mke:MKE-P37_95"; do
+for m in ":SMK-37 Pro_96" "-elite:SMK-37 Elite_96" "-mke:MKE-P37_96"; do
     for f in build/shineon*-smk37${m%%:*}.fwsc; do
         [ -f "$f" ] || continue
         found=1

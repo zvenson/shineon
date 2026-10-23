@@ -89,7 +89,7 @@ static const char *const ENS_NAME[NENS] = {"OFF", "MONO", "STEREO", "WIDE"};
 /* the pages: four knobs each (-1 = no knob) */
 typedef struct { const char *title; int8_t p[4]; } page_t;
 enum { PG_PERFORM, PG_REG1, PG_REG2, PG_TONE, PG_ENV, PG_VIB, PG_ARP, PG_ENS, PG_PHASER, PG_DELAY, PG_REVERB,
-       PG_OUTPUT, PG_GLOBAL, PG_SEQ, NPAGE };   /* the sequencer's step view (not patch parameters: drawn by hand) */
+       PG_DRIVE, PG_OUTPUT, PG_GLOBAL, PG_MIXER, PG_SEQ, NPAGE };   /* DRIVE, the MIXER, the sequencer's view: drawn by hand */
 static const page_t PAGE[NPAGE] = {
     [PG_PERFORM] = {"PERFORM", {P_TONE, P_ATTACK, P_RELEASE, P_ENS_DEPTH}},
     [PG_REG1] = {"STRINGS", {P_CBASS, P_CELLO, P_VIOLA, P_VIOLIN}},
@@ -103,7 +103,9 @@ static const page_t PAGE[NPAGE] = {
     [PG_PHASER] = {"PHASER", {P_PHA_RATE, P_PHA_DEPTH, P_PHA_FB, P_PHA_MIX}},
     [PG_DELAY] = {"DELAY", {P_DLY_TIME, P_DLY_FB, P_DLY_TONE, P_DLY_MIX}},
     [PG_REVERB] = {"REVERB", {P_REV_SIZE, P_REV_DAMP, P_REV_PRE, P_REV_MIX}},
+    [PG_DRIVE] = {"DRIVE", {-1, -1, -1, -1}},   /* the drive send: TYPE, DRIVE, TONE, MIX (the settings'), drawn by hand */
     [PG_GLOBAL] = {"GLOBAL", {-1, -1, -1, -1}},   /* tempo, click, MIDI channel, tune: globals, drawn by hand */
+    [PG_MIXER] = {"MIXER", {-1, -1, -1, -1}},   /* level, pan, the sends per track: drawn by hand */
     [PG_SEQ] = {"SEQUENCER", {-1, -1, -1, -1}},   /* length, note value, swing, transpose; a held step: its own four */
 };
 

@@ -4,12 +4,17 @@
  * footages (16', 8', 4' sawtooth and an 8' square, as a top-octave divider gives them), and the six registers are
  * fixed formant filters on the summed footages, not filters per voice: CONTRABASS and CELLO (the bass section),
  * VIOLA, VIOLIN, TRUMPET and HORN (the upper). Then the tone control, a gentle saturation and the ensemble
- * (shn_fx.h). 16 voices. The main loop sends note events through a ring and writes the live patch and the
+ * (shn_fx.h, one per sound). Four sounds (one per track) share the 16 keyers; a mixer. The main loop sends note events through a ring and writes the live patches and the
  * controllers; the ISR owns the voices, the held-note list, the arpeggiator and the sustain. */
-#ifndef RING_PUBLISH
+#ifndef RING_PUBLISH                            /* (one core: the ISR runs whole between two main-loop instructions) */
 #define RING_PUBLISH() __asm__ volatile("" ::: "memory")
 #endif
+#ifndef RING_TAKE
+#define RING_TAKE() __asm__ volatile("" ::: "memory")
+#endif
 #define NV 16u
+#define NPART 4u                               /* the four tracks' sounds */
+#define NCARD 16u                               /* the vintage tables' keyers */
 #define NHELD 16u
 #define ENV_ONE (1 << 24)
 #define LEVEL_FLOOR 2048                        /* -78 dB: a release below this frees the voice */
@@ -30,7 +35,7 @@ typedef struct {
     int32_t lfo_fade;                           /* Q15 */
     uint32_t seq;                               /* allocation order */
     uint8_t note, vel, gate;                    /* gate: the key (or the arp) holds it */
-    uint8_t part;                               /* 0: sound A, 1: track B's own sound */
+    uint8_t part;                               /* the track whose sound it is, 0..3 */
     uint8_t low;                                /* in the bass section (SPLIT) */
     uint8_t w;                                  /* this block: which footages to render (W_*) */
 } voice_t;
@@ -40,16 +45,26 @@ typedef struct {
 #define W_4 8u
 #define W_SQ 16u
 
-/* two sounds: A (the keys, the arp, the effects) and track B's own. Track B has one when its pattern names a
- * program (pat.trk[1].pad[0] = program + 1); else B plays A as part 0. The main loop writes, the ISR reads. */
-static patch_t live, live_b, live_bq;           /* live_bq: the next pattern's B, swapped in with it */
-static volatile uint32_t ctl_bq_swap;           /* the next pattern brings live_bq along */
-static uint32_t b_own;                          /* (ISR) track B has its own sound this block */
+/* four sounds, one per track (A's patch also holds the song's phaser, delay and reverb). The main loop writes, the
+ * ISR reads. */
+static patch_t live_p[NPART];
+#define live (live_p[0])                        /* track A's sound: the song's effects' settings are its */
+/* the mixer (main loop writes): per track a level 0..127, a pan -64..64, the sends 0..127 (cho: OberVave's chorus,
+ * the mixer has no row for it), muted: bit t */
+static volatile uint8_t ctl_mix_lvl[NPART] = {100, 100, 100, 100};
+static volatile uint8_t ctl_mix_cho[NPART], ctl_mix_dly[NPART], ctl_mix_rev[NPART], ctl_mix_drv[NPART];   /* (cho: unused) */
+static volatile int8_t ctl_mix_pan[NPART];
+static volatile uint32_t ctl_mix_off;           /* bit t: track t silent (muted, or another one soloed) */
+/* the next pattern's mixer, drive and master, taken by the ISR on the downbeat it swaps the pattern in */
+typedef struct { uint8_t lvl[NPART], cho[NPART], dly[NPART], rev[NPART], drv[NPART]; int8_t pan[NPART]; uint32_t off;
+                 uint8_t dv_type, dv_amt, dv_tone, dv_mix, m_vol, m_dj, m_drive, m_comp; } mxq_t;
+static mxq_t mx_q;
+static volatile uint32_t ctl_mx_swap;
 static voice_t vc[NV];
 static uint32_t vseq, rr;                       /* allocation counter, round-robin pointer */
 
 /* main loop -> ISR: note events */
-typedef struct { uint8_t type, note, vel, part; } nev_t;   /* type 1 on, 0 off; part 1: track B's sound */
+typedef struct { uint8_t type, note, vel, part; } nev_t;   /* type 1 on, 0 off; part: the track's sound */
 #define NQ 64u
 static nev_t nq[NQ];
 static volatile uint32_t nq_w, nq_r;
@@ -84,8 +99,8 @@ static int16_t scope[SCOPE_N];
 static volatile uint32_t scope_state, scope_stride = 4;   /* 0 idle, 1 armed, 2 running, 3 done */
 
 /* ---- the held notes (ISR): in order of pressing, physically down or held by the pedal / latch */
-static struct { uint8_t note, vel, phys; } held[2][NHELD];   /* per sound: A's keys, B's keys */
-static uint32_t nheld[2];
+static struct { uint8_t note, vel, phys; } held[NPART][NHELD];   /* per sound: its keys */
+static uint32_t nheld[NPART];
 static uint32_t rnd_state = 0x9E3779B9u;
 
 /* ---- the register filters: fixed formants on the summed footages, one set per sound */
@@ -98,7 +113,7 @@ typedef struct {
 } regs_t;
 static svf_coef_t C_CB, C_CE, C_CEF, C_VA, C_VAF, C_VAH, C_VIH, C_VI, C_TR, C_TRL, C_HO;   /* (set once) */
 
-/* ---- the two sounds as the ISR sees them: the patch, its vibrato, the numbers derived from the patch once per block */
+/* ---- the four sounds as the ISR sees them: the patch, its vibrato, the numbers derived from the patch once per block */
 typedef struct {
     const patch_t *p;
     uint32_t lfo_ph;
@@ -110,15 +125,8 @@ typedef struct {
     svf_coef_t tone_c;
     regs_t r;
 } part_t;
-static part_t pt[2] = {{&live, 0, 0, 60 << 16}, {&live, 0, 0, 60 << 16}};
-static uint32_t seq_b_own(void);                /* (shn_seq.h) the pattern gives track B its own sound */
-static void parts_point(void)                   /* which patch each part plays (the pattern may have changed) */
-{
-    uint32_t was = b_own;
-    b_own = seq_b_own();
-    pt[1].p = b_own ? &live_b : &live;
-    if (b_own && !was) pt[1].tone_sm = live_b.v[P_TONE] << 8;   /* B's own from now: its tone from where it is */
-}
+static part_t pt[NPART] = {{&live_p[0], 0, 0, 60 << 16}, {&live_p[1], 0, 0, 60 << 16}, {&live_p[2], 0, 0, 60 << 16},
+                            {&live_p[3], 0, 0, 60 << 16}};
 
 static void held_remove(uint32_t p, uint32_t note)
 {
@@ -129,8 +137,8 @@ static void held_remove(uint32_t p, uint32_t note)
 }
 
 /* ---- vintage: each keyer has its own small offsets, scaled by the knob (a divider is in tune by nature: a little) */
-static const int8_t VINT_TUNE8[NV] = {-6, 4, 2, -5, 6, -3, 1, -5, 3, -4, 5, -2, 2, -6, 4, -1};   /* +-2.5 cents */
-static const int8_t VINT_ENV[NV] = {10, -6, 14, -12, 3, -16, 8, -4, 12, -9, 5, -14, 7, -2, 15, -11};   /* /128 on the times */
+static const int8_t VINT_TUNE8[NCARD] = {-6, 4, 2, -5, 6, -3, 1, -5, 3, -4, 5, -2, 2, -6, 4, -1};   /* +-2.5 cents */
+static const int8_t VINT_ENV[NCARD] = {10, -6, 14, -12, 3, -16, 8, -4, 12, -9, 5, -14, 7, -2, 15, -11};   /* /128 on the times */
 
 static void voice_start(voice_t *v, uint32_t part, uint32_t note, uint32_t vel)
 {
@@ -205,6 +213,8 @@ static void voices_release_part(uint32_t part)
         if (vc[v].part == part) vc[v].gate = 0;
 }
 
+static int seq_phase(uint32_t *ph);             /* the sequencer (its file): running, and where in the beat (frames) */
+static int seq_starting(void);                  /* the transport starts (or starts over) in this block */
 static void seq_tick(void);                     /* the step sequencer (shn_seq.h): per block, after the arp */
 
 /* the click (main: ctl_click on / off) and a one-bar count-in before a recording (main: ctl_count) */
@@ -220,26 +230,39 @@ static void click_start(uint32_t accent)        /* beat 1 higher and louder */
 
 /* ---- the arpeggiators (per block, 0.36 ms steps): one per sound, each on its own keys and its own ARP settings */
 typedef struct { uint32_t cnt, period, gate_at, pos, dir, sounding, note, was_on; } arp_t;
-static arp_t arp[2];
+static arp_t arp[NPART];
 
-/* ISR -> main loop: the notes the arps play (REC records them, not the keys that feed them): on, note, part */
-#define AQ 32u
-static uint8_t arp_q[AQ][3];
+/* ISR -> main loop: the notes the arps play (REC records them, not the keys that feed them), each with the key's
+ * velocity and where its track was when it played: REC puts it exactly there, however late the main loop takes it */
+#define AQ 64u
+typedef struct { uint8_t on, note, part, vel; uint32_t q8; } arpev_t;
+static arpev_t arp_q[AQ];
 static volatile uint32_t arp_qw, arp_qr;
-static void arp_post(uint32_t p, uint32_t on, uint32_t note)
+static uint32_t seq_q8_now(uint32_t t);         /* (shn_seq.h) where track t is in this block, 0xFFFFFFFF: not running */
+static void arp_post(uint32_t p, uint32_t on, uint32_t note, uint32_t vel)
 {
+    arpev_t *e;
     if (arp_qw - arp_qr >= AQ) return;
-    arp_q[arp_qw % AQ][0] = (uint8_t)on;
-    arp_q[arp_qw % AQ][1] = (uint8_t)note;
-    arp_q[arp_qw % AQ][2] = (uint8_t)p;
+    e = &arp_q[arp_qw % AQ];
+    e->on = (uint8_t)on; e->note = (uint8_t)note; e->part = (uint8_t)p; e->vel = (uint8_t)vel;
+    e->q8 = seq_q8_now(p);
     RING_PUBLISH();
     arp_qw++;
+}
+static volatile uint32_t eng_t;                 /* frames the engine has made (the MIDI clock is measured in them) */
+
+/* a quarter in frames, the internal tempo rounded to 48 frames: every step length comes out whole, the arp, the
+ * tracks and the bar stay locked (the tempo off by at most 0.1 %) */
+static uint32_t quarter_len(void)
+{
+    if (ctl_ext_quarter) return ctl_ext_quarter;
+    return (60u * FS / (uint32_t)clampi((int32_t)ctl_tempo, 40, 240) + 24u) / 48u * 48u;
 }
 
 static void arp_stop_note(uint32_t p)
 {
     arp_t *a = &arp[p];
-    if (a->sounding) { voice_release(p, a->note, 1); a->sounding = 0; arp_post(p, 0, a->note); }
+    if (a->sounding) { voice_release(p, a->note, 1); a->sounding = 0; arp_post(p, 0, a->note, 0); }
 }
 
 static void arp_step(uint32_t p)
@@ -272,7 +295,7 @@ static void arp_step(uint32_t p)
     for (i = 0; i < n; i++)                     /* the velocity of that key */
         if (held[p][i].note == sorted[idx]) break;
     voice_trigger(p, a->note, i < n ? held[p][i].vel : 100u);
-    arp_post(p, 1, a->note);
+    arp_post(p, 1, a->note, i < n ? held[p][i].vel : 100u);
     a->sounding = 1;
     ui_arp_step++;
 }
@@ -288,10 +311,28 @@ static void arp_tick(uint32_t p)
     }
     if (!a->was_on) { voices_release_part(p); a->was_on = 1; a->pos = 0; a->cnt = 0xFFFFFFFFu; }
     if (!nheld[p]) { arp_stop_note(p); a->pos = 0; a->cnt = 0xFFFFFFFFu; return; }
-    q = ctl_ext_quarter ? ctl_ext_quarter : 60u * FS / clampi(ctl_tempo, 40, 240);
+    q = quarter_len();
     a->period = q / div;
     if (a->period < CTL) a->period = CTL;
     a->gate_at = (a->period * (pv[P_ARP_GATE] + 1u)) >> 7;
+    {                                           /* the transport running: on its grid (the first key: at once if just
+                                                 * after a line, else on the next one), as a DAW's arp */
+        uint32_t ph;
+        if (seq_starting()) {                   /* the transport starts in this block: the downbeat */
+            if (a->sounding && a->cnt != 0xFFFFFFFFu && a->cnt < a->period / 4u) { a->cnt = 0; return; }   /* (its note
+                                                 * just came, e.g. the one that started REC: it is the downbeat's) */
+            a->cnt = 0; arp_stop_note(p); arp_step(p); return;
+        }
+        if (seq_phase(&ph)) {
+            if (ph / a->period >= div) return;  /* (the last sliver of a beat: its line is the next beat's start) */
+            ph %= a->period;
+            if (ph < CTL || (a->cnt == 0xFFFFFFFFu && ph < a->period / 4u)) { a->cnt = ph; arp_stop_note(p); arp_step(p); return; }
+            if (a->cnt == 0xFFFFFFFFu) return;  /* (waiting for the line) */
+            a->cnt = ph;
+            if (a->sounding && a->cnt >= a->gate_at && pv[P_ARP_GATE] < 127u) arp_stop_note(p);
+            return;
+        }
+    }
     if (a->cnt == 0xFFFFFFFFu || a->cnt + CTL >= a->period) {
         a->cnt = a->cnt == 0xFFFFFFFFu ? 0 : a->cnt + CTL - a->period;
         arp_stop_note(p);
@@ -359,14 +400,17 @@ static void parts_off(uint32_t p)               /* a sound gone (B back on A, a 
 
 static void engine_events(void)
 {
-    uint32_t sus = part_sus(0) | part_sus(1) << 1;
-    if (ctl_panic) { ctl_panic = 0; parts_off(0); parts_off(1); voices_release_all(); }
-    if (sus_was & ~sus & 1u) ev_sustain_up(0);  /* each sound on its own: A's HOLD off never touches B */
-    if (sus_was & ~sus & 2u) ev_sustain_up(1);
+    uint32_t sus = 0, p;
+    for (p = 0; p < NPART; p++) sus |= part_sus(p) << p;
+    if (ctl_panic) { ctl_panic = 0; for (p = 0; p < NPART; p++) parts_off(p); voices_release_all(); }
+    for (p = 0; p < NPART; p++)                 /* each sound on its own: A's HOLD off never touches B */
+        if ((sus_was & ~sus) >> p & 1u) ev_sustain_up(p);
     sus_was = sus;
     while (nq_r != nq_w) {
-        nev_t e = nq[nq_r % NQ];
-        uint32_t p = e.part && b_own;           /* (B without its own sound: its keys play A) */
+        nev_t e;
+        RING_TAKE();
+        e = nq[nq_r % NQ];
+        p = e.part % NPART;
         nq_r++;
         if (e.type) ev_note_on(p, e.note, e.vel);
         else ev_note_off(p, e.note);
@@ -441,7 +485,7 @@ static void voice_block(voice_t *v, uint32_t card)
 {
     const part_t *g = &pt[v->part];
     const uint8_t *pv = g->p->v;
-    int32_t lfo, p8, velg, vint = g->vint, vt = (vint * VINT_ENV[card]) >> 7, a;
+    int32_t lfo, p8, velg, vint = g->vint, vt = (vint * VINT_ENV[card % NCARD]) >> 7, a;
     uint32_t glide_k = g->glide_k;
     if (v->pitch16 != v->target16) {            /* glide */
         if (!glide_k) v->pitch16 = v->target16;
@@ -462,7 +506,7 @@ static void voice_block(voice_t *v, uint32_t card)
     v->drift += (int32_t)(xorshift(&v->noise) & 31u) - 16;   /* vintage: a slow random walk */
     v->drift -= v->drift >> 11;
     /* pitch, Q8 semitones: the 8' footage is the key */
-    p8 = (v->pitch16 >> 8) + g->bend8 + ctl_tune8 + g->oct8 + ((VINT_TUNE8[card] * vint) >> 7) + ((v->drift * vint) >> 11);
+    p8 = (v->pitch16 >> 8) + g->bend8 + ctl_tune8 + g->oct8 + ((VINT_TUNE8[card % NCARD] * vint) >> 7) + ((v->drift * vint) >> 11);
     p8 += (lfo * (g->vib_q + g->wheel_q) * 2) >> 15;   /* up to about a semitone */
 #if BOARD_SMK37
     p8 += (lfo * ctl_vib) >> 15;
@@ -480,7 +524,7 @@ static void voice_block(voice_t *v, uint32_t card)
 }
 
 /* the footage busses, per sound: 16' saw, 8' saw (the bass section's), 8' saw, 4' saw, 8' square */
-static int32_t fbus[2][5][HALF_FRAMES] __attribute__((section(".pool")));
+static int32_t fbus[NPART][5][HALF_FRAMES] __attribute__((section(".pool")));
 
 /* ---- the samples of one keyer: the locked footages, each into its bus */
 static void voice_render(voice_t *v, int32_t (*bus)[HALF_FRAMES], uint32_t at)
@@ -520,7 +564,7 @@ static inline __attribute__((always_inline)) int32_t svf_out(const svf_coef_t *c
 static void regs_render(part_t *g, uint32_t n, int32_t *dst)
 {
     regs_t *r = &g->r;
-    int32_t (*bus)[HALF_FRAMES] = fbus[g == &pt[1]];
+    int32_t (*bus)[HALF_FRAMES] = fbus[(uint32_t)(g - pt) % NPART];
     uint32_t i, k, any = 0;
     int32_t wq = g->warmth_q12, bq = g->bright_q;
     for (k = 0; k < NREG; k++) any |= (uint32_t)(r->gain[k] | g->reg_q12[k]);
@@ -571,55 +615,76 @@ static void regs_render(part_t *g, uint32_t n, int32_t *dst)
     }
 }
 
-static uint32_t seq_b_dry(void);                /* (shn_seq.h) how much of track B's sound passes the effects by, 0..127 */
-static int32_t bus_b[2u * HALF_FRAMES];         /* track B's own sound: into the effects by its send, the rest dry */
+/* the mixer: each sound through its own registers, ensemble and phaser into its own bus, then by its level and pan to
+ * the output, and by its sends into the effects (DELAY, REVERB, DRIVE: return tracks, MIX = the return) */
+static int32_t sbus[NPART][2u * HALF_FRAMES], snd_d[HALF_FRAMES], snd_r[HALF_FRAMES], snd_v[HALF_FRAMES];
+static volatile uint32_t ui_trk_peak[NPART];   /* each track's peak after its fader, for the mixer's meters (the UI takes it) */
+static int32_t mix_g[NPART];                    /* the level as it moves (Q12, slewed per half: no zipper) */
+static uint32_t part_idle[NPART];               /* halves without a voice: a quiet sound's registers and ensemble rest */
 
 static void engine_audio(int32_t *out, uint32_t n)
 {
-    uint32_t b, v, i, k, was_own = b_own, dry, bus = b_own, nb;
+    uint32_t b, v, i, k, p, used = 0;
     static int32_t sc_prev;
     static uint32_t sc_i, sc_sub;
-    fx_block(&live, ctl_ext_quarter ? ctl_ext_quarter : 60u * FS / clampi(ctl_tempo, 40, 240));
+    fx_block(&live, quarter_len());
     vol_q12 = (int32_t)((ctl_cc7 * ctl_cc7) >> 2);
-    for (v = 0; v < NV; v++)                    /* (one sound and no B tails: no bus) */
-        if (vc[v].part && vc[v].ae.stage != E_IDLE) bus = 1;
-    nb = bus ? 2u : 1u;
-    for (b = 0; b < nb; b++)
+    for (p = 0; p < NPART; p++) {
         for (k = 0; k < 5u; k++)
-            for (i = 0; i < n; i++) fbus[b][k][i] = 0;
-    if (bus)
-        for (i = 0; i < 2u * n; i++) bus_b[i] = 0;
+            for (i = 0; i < n; i++) fbus[p][k][i] = 0;
+        for (i = 0; i < 2u * n; i++) sbus[p][i] = 0;
+    }
+    for (i = 0; i < n; i++) snd_d[i] = snd_r[i] = snd_v[i] = 0;
     for (b = 0; b < n; b += CTL) {
-        parts_point();
-        if (was_own && !b_own) parts_off(1);    /* (B back on sound A: its own notes let go) */
         engine_events();
-        if (ctl_arp_restart) { ctl_arp_restart = 0; arp[0].pos = arp[1].pos = 0; arp[0].cnt = arp[1].cnt = 0xFFFFFFFFu; }
-        arp_tick(0);
-        if (b_own) arp_tick(1);
-        seq_tick();                             /* (may swap the pattern in, and B's sound with it) */
-        parts_point();
-        if (was_own && !b_own) parts_off(1);
-        was_own = b_own;
-        lfo_tick(&pt[0]);
-        if (b_own) lfo_tick(&pt[1]);
-        block_globals(&pt[0]);
-        if (b_own) block_globals(&pt[1]);
+        eng_t += CTL;
+        if (ctl_arp_restart) { ctl_arp_restart = 0; for (p = 0; p < NPART; p++) { arp[p].pos = 0; arp[p].cnt = 0xFFFFFFFFu; } }
+        for (p = 0; p < NPART; p++) arp_tick(p);
+        seq_tick();                             /* (may swap the pattern in) */
+        for (p = 0; p < NPART; p++) { lfo_tick(&pt[p]); block_globals(&pt[p]); }
         for (v = 0; v < NV; v++) {
             if (vc[v].ae.stage == E_IDLE && !vc[v].gate) {
                 if (ui_vlevel[v]) { ui_vlevel[v] = 0; vc[v].amp0 = vc[v].amp1 = 0; }
                 continue;
             }
+            p = vc[v].part % NPART;
+            used |= 1u << p;
             voice_block(&vc[v], v);
-            voice_render(&vc[v], fbus[vc[v].part && bus], b);
+            voice_render(&vc[v], fbus[p], b);
         }
     }
-    regs_render(&pt[0], n, out);
-    if (bus) regs_render(&pt[1], n, bus_b);
-    dry = bus ? seq_b_dry() : 0u;
-    for (i = 0; bus && i < 2u * n; i++) {              /* B's send: that much joins A on its way into the effects */
-        int32_t x = bus_b[i], d = (x * (int32_t)dry) >> 7;
-        out[i] += x - d;
-        bus_b[i] = d;
+    for (p = 0; p < NPART; p++) {               /* the registers and the ensemble: a sound with voices, and ~0.2 s after its
+                                                 * last (they ring out) */
+        part_idle[p] = used >> p & 1u ? 0u : part_idle[p] + 1u;
+        if (part_idle[p] >= 32u) continue;
+        regs_render(&pt[p], n, sbus[p]);
+        ens_block(&ensp[p], pt[p].p);
+        ens_process(&ensp[p], sbus[p], n);
+        pha_block(&phap[p], pt[p].p);
+        pha_process(&phap[p], sbus[p], n);
+    }
+    for (p = 0; p < NPART; p++) {               /* the mixer */
+        int32_t lvl = ctl_mix_off >> p & 1u ? 0 : (int32_t)ctl_mix_lvl[p], target = lvl * lvl * 4096 / 10000, g0 = mix_g[p], gl, gr, sd, sr, sv;   /* 100 = unity */
+        uint32_t pos = (uint32_t)(clampi(ctl_mix_pan[p], -64, 64) + 64), pk = 0;
+        if (part_idle[p] >= 32u) { mix_g[p] = target; continue; }
+        mix_g[p] += (target - g0) / 2;
+        gl = PAN_Q12[128u - pos] * 4096 / 2896; /* (centre = unity: the pan law's -3 dB taken back) */
+        gr = PAN_Q12[pos] * 4096 / 2896;
+        gl = gl > 4096 ? 4096 : gl; gr = gr > 4096 ? 4096 : gr;
+        sd = ctl_mix_dly[p]; sr = ctl_mix_rev[p]; sv = ctl_mix_drv[p];
+        {
+        int32_t g = g0 << 8, dg = ((mix_g[p] - g0) << 8) / (int32_t)n;   /* (the level glides over the half, Q8) */
+        for (i = 0; i < n; i++, g += dg) {
+            int32_t l = (int32_t)(((int64_t)sbus[p][2u * i] * (g >> 8) >> 12) * gl >> 12), r = (int32_t)(((int64_t)sbus[p][2u * i + 1u] * (g >> 8) >> 12) * gr >> 12);
+            int32_t m = (l + r) >> 1;
+            uint32_t al = (uint32_t)(l < 0 ? -l : l), ar = (uint32_t)(r < 0 ? -r : r);
+            if (al > pk) pk = al;
+            if (ar > pk) pk = ar;
+            out[2u * i] += l; out[2u * i + 1u] += r;
+            snd_d[i] += (m * sd) >> 7; snd_r[i] += (m * sr) >> 7; snd_v[i] += (m * sv) >> 7;
+        }
+        }
+        if (pk > ui_trk_peak[p]) ui_trk_peak[p] = pk;
     }
     for (i = 0; i < n; i++) {                   /* the output stage: a gentle tanh, never a hard clip */
         int32_t l = softclip((clampi(out[2u * i], -262144, 262143) >> 2) * vol_q12 >> 10);
@@ -636,10 +701,14 @@ static void engine_audio(int32_t *out, uint32_t n)
         }
         sc_prev = m;
     }
-    fx_process(out, n);
-    if (dry)                                    /* B's dry part: its own output stage, after the effects */
-        for (i = 0; i < 2u * n; i++)
-            out[i] = sat16(out[i] + softclip((clampi(bus_b[i], -262144, 262143) >> 2) * vol_q12 >> 10));
+    for (i = 0; i < n; i++) {                   /* the sends at the output's scale (the effects work after the output stage) */
+        snd_d[i] = sat16((clampi(snd_d[i], -262144, 262143) >> 2) * vol_q12 >> 10);
+        snd_r[i] = sat16((clampi(snd_r[i], -262144, 262143) >> 2) * vol_q12 >> 10);
+        snd_v[i] = sat16((clampi(snd_v[i], -262144, 262143) >> 2) * vol_q12 >> 10);
+    }
+    fx_process(out, snd_d, snd_r, n);
+    drive_process(out, snd_v, n);
+    master_process(out, n);
     for (i = 0; i < n && click_amp; i++) {     /* the click: after the effects, never recorded */
         int32_t c;
         click_ph += click_inc;
@@ -683,6 +752,6 @@ static void engine_init(void)
     coef_fixed(&C_TR, G_1500, 2500);
     coef_fixed(&C_TRL, G_2500, 5793);
     coef_fixed(&C_HO, G_600, 6500);
-    pt[0].tone_sm = pt[1].tone_sm = 100 << 8;
+    for (v = 0; v < NPART; v++) pt[v].tone_sm = 100 << 8;
     fx_init();
 }

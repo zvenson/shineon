@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
-/* The effects after the output stage: the ensemble (three bucket-brigade lines swayed by two LFOs, 120 degrees
- * apart, the heart of every string machine), a phaser (six allpass stages, the string machine's classic companion),
- * a ping-pong delay in note values of the tempo, and a plate reverb (J. Dattorro's figure-of-eight tank, 1997).
+/* The effects: per sound, on its own bus before the mixer, the ensemble (three bucket-brigade lines swayed by two
+ * LFOs, 120 degrees apart, the heart of every string machine) and a phaser (six allpass stages, the string machine's
+ * classic companion): a program brings them, as on 1.x. Then, fed by the mixer's sends (the song's effects), a
+ * ping-pong delay in note values of the tempo, a plate reverb (J. Dattorro's figure-of-eight tank, 1997) and a drive;
+ * last the MASTER (DJ filter, drive, compressor).
  * All lines are int16 in one .pool buffer; the signals are Q15 as the output stage leaves them. Integers only.
  * REV_DIV 1: the reverb at the full rate (the sound comes first). 2: at half the rate, if the chip turns out
  * to need it: a dark hall loses little by it and it halves the reverb's time and memory. */
@@ -27,7 +29,8 @@
 #define RV_D4 RVL(3163)
 #define REV_N (REV_PRE_N + RV_IN1 + RV_IN2 + RV_IN3 + RV_IN4 + RV_AP1 + 16u + RV_D1 + RV_AP2 + RV_D2 + RV_AP3 + 16u + RV_D3 + RV_AP4 + RV_D4)
 #define RV_BW (REV_DIV == 2u ? 24000 : 16700)   /* the input's one-pole: ~5 kHz either way */
-#define FX_MEM_N (ENS_N + 2u * DLY_MAX + REV_N)
+#define ENS_PARTS 4u                            /* (NPART: one ensemble a sound) */
+#define FX_MEM_N (ENS_PARTS * ENS_N + 2u * DLY_MAX + REV_N)
 
 typedef struct { int16_t *b; uint32_t len, w; } line_t;   /* w: where the next sample goes */
 static int16_t fx_mem[FX_MEM_N] __attribute__((section(".pool")));
@@ -77,12 +80,20 @@ static inline int32_t tri_q(uint32_t ph)        /* a triangle -2048..2047 (so Q8
 }
 
 /* ---- the state */
-static line_t ens, dl, dr, rv_pre, rv_in[4], rv_ap1, rv_d1, rv_ap2, rv_d2, rv_ap3, rv_d3, rv_ap4, rv_d4;
-static uint32_t ens_ph_s, ens_ph_f, ens_inc_s, ens_inc_f, ens_mode, rv_ph1, rv_ph2;
-static int32_t ens_depth_s, ens_depth_f, ens_mix, ens_lp, ens_lp2, ens_lpl, ens_lpl2, ens_lpr, ens_lpr2, ens_cur_s, ens_cur_f, dly_mix, rev_mix, dly_fb, dly_tone_k, rev_decay, rev_damp_k;
+static line_t dl, dr, rv_pre, rv_in[4], rv_ap1, rv_d1, rv_ap2, rv_d2, rv_ap3, rv_d3, rv_ap4, rv_d4;
+static uint32_t rv_ph1, rv_ph2;
+static int32_t dly_mix, rev_mix, dly_fb, dly_tone_k, rev_decay, rev_damp_k;
+/* a sound's ensemble: its line, its two LFOs, the brigade's filters, the depth as it glides */
+typedef struct {
+    line_t l;
+    uint32_t ph_s, ph_f, inc_s, inc_f, mode, active;
+    int32_t depth_s, depth_f, mix, lp, lp2, lpl, lpl2, lpr, lpr2, cur_s, cur_f;
+} ens_t;
+static ens_t ensp[ENS_PARTS];
 /* the phaser: six first-order allpasses a channel, the LFO a quarter turn apart left and right */
-static int32_t pha_x[2][6], pha_y[2][6], pha_fb_s[2], pha_mix, pha_fb, pha_depth;
-static uint32_t pha_ph, pha_inc, ens_active, pha_active;
+/* a sound's phaser: six allpasses a side, the sweep, the feedback */
+typedef struct { int32_t x[2][6], y[2][6], fb_s[2], mix, fb, depth; uint32_t ph, inc, active; } pha_t;
+static pha_t phap[ENS_PARTS];
 static int32_t dly_time, dly_cur;               /* Q16 samples: the target and where the read is (it slews like a tape) */
 static int32_t dly_lpl, dly_lpr, rv_lp_in, rv_lpl, rv_lpr, rv_yl, rv_yr;
 #if REV_DIV == 2u
@@ -95,7 +106,8 @@ static uint32_t fx_odd;
 
 static void fx_init(void)
 {
-    line_init(&ens, ENS_N);
+    uint32_t e;
+    for (e = 0; e < ENS_PARTS; e++) { line_init(&ensp[e].l, ENS_N); ensp[e].ph_f = e * 0x3C6EF372u; }   /* (the sounds' fast LFOs apart) */
     line_init(&dl, DLY_MAX);
     line_init(&dr, DLY_MAX);
     line_init(&rv_pre, REV_PRE_N);
@@ -105,27 +117,39 @@ static void fx_init(void)
     dly_cur = dly_time = 11025 << 16;
 }
 
-/* the patch's numbers, once per ISR call. quarter: frames per quarter note (the arp's clock) */
+/* a sound's ensemble, once per ISR call: a slow LFO near 0.6 Hz and a fast one near 6 Hz (RATE scales both, 0.5 ..
+ * 2 x), the slow one sways the lines by up to +-3 ms, the fast one adds a shimmer of a tenth of that */
+static void ens_block(ens_t *e, const patch_t *p)
+{
+    int32_t d, t;
+    d = p->v[P_ENS_RATE]; t = 512 + ((d - 64) * (d > 64 ? 8 : 4));   /* Q10: 0.5 .. 1.0 .. 1.5 */
+    e->inc_s = (uint32_t)((58435u * (uint32_t)t) >> 10);   /* 0.6 Hz in 2^32 / 44100 steps */
+    e->inc_f = (uint32_t)((584350u * (uint32_t)t) >> 10);  /* 6.0 Hz */
+    d = p->v[P_ENS_DEPTH]; e->depth_s = (d * d * 11) >> 9;   /* x the sine's Q15 = Q16 samples: up to +-3.9 ms at 127 */
+    e->depth_f = e->depth_s / 5;                /* the fast shimmer at a fifth: the creamy part */
+    e->mode = p->v[P_ENS_MODE] % NENS;
+    e->mix = e->mode == E_OFF ? 0 : (p->v[P_ENS_MIX] * 256) >> 7;   /* Q8, up to 1.0 = the lines only, as the originals */
+    if (e->mix) e->active = 2u * FS; else if (e->active > HALF_FRAMES) e->active -= HALF_FRAMES; else e->active = 0;
+}
+
+/* a sound's phaser, once per ISR call: 0.05 .. 4 Hz, the sweep's width, the feedback up to 0.8, MIX up to 0.5 (the
+ * classic equal mix) */
+static void pha_block(pha_t *f, const patch_t *p)
+{
+    int32_t d = p->v[P_PHA_RATE];
+    f->inc = (uint32_t)(5 + ((d * d * 395) >> 14)) * 974u;
+    f->depth = p->v[P_PHA_DEPTH];
+    f->fb = p->v[P_PHA_FB] * 206;
+    f->mix = (p->v[P_PHA_MIX] * 128) >> 7;
+    if (f->mix) f->active = 2u * FS; else if (f->active > HALF_FRAMES) f->active -= HALF_FRAMES; else f->active = 0;
+}
+
+/* the song's effects (the delay and reverb settings, kept in track A's patch), once per ISR call. quarter:
+ * frames per quarter note (the delay's note values) */
 static void fx_block(const patch_t *p, uint32_t quarter)
 {
     int32_t d, t;
     uint32_t div = p->v[P_DLY_TIME] % NDDIV, samples;
-    /* the ensemble: a slow LFO near 0.6 Hz and a fast one near 6 Hz (RATE scales both, 0.5 .. 2 x), the slow one
-     * sways the lines by up to +-3 ms, the fast one adds a shimmer of a tenth of that */
-    d = p->v[P_ENS_RATE]; t = 512 + ((d - 64) * (d > 64 ? 8 : 4));   /* Q10: 0.5 .. 1.0 .. 1.5 */
-    ens_inc_s = (uint32_t)((58435u * (uint32_t)t) >> 10);   /* 0.6 Hz in 2^32 / 44100 steps */
-    ens_inc_f = (uint32_t)((584350u * (uint32_t)t) >> 10);  /* 6.0 Hz */
-    d = p->v[P_ENS_DEPTH]; ens_depth_s = (d * d * 11) >> 9;   /* x the sine's Q15 = Q16 samples: up to +-3.9 ms at 127 */
-    ens_depth_f = ens_depth_s / 5;              /* the fast shimmer at a fifth: the creamy part */
-    ens_mode = p->v[P_ENS_MODE] % NENS;
-    ens_mix = ens_mode == E_OFF ? 0 : (p->v[P_ENS_MIX] * 256) >> 7;   /* Q8, up to 1.0 = the lines only, as the originals */
-    if (ens_mix) ens_active = 2u * FS; else if (ens_active > HALF_FRAMES) ens_active -= HALF_FRAMES; else ens_active = 0;
-    /* the phaser: 0.05 .. 4 Hz, the sweep's width, the feedback up to 0.8 */
-    d = p->v[P_PHA_RATE]; pha_inc = (uint32_t)(5 + ((d * d * 395) >> 14)) * 974u;
-    pha_depth = p->v[P_PHA_DEPTH];
-    pha_fb = p->v[P_PHA_FB] * 206;
-    pha_mix = (p->v[P_PHA_MIX] * 128) >> 7;     /* Q8, up to 0.5 of each: the classic equal mix */
-    if (pha_mix) pha_active = 2u * FS; else if (pha_active > HALF_FRAMES) pha_active -= HALF_FRAMES; else pha_active = 0;
     dly_mix = (p->v[P_DLY_MIX] * 180) >> 7;     /* wet up to 0.7 of the dry (Q8): the sum stays in range */
     rev_mix = (p->v[P_REV_MIX] * 180) >> 7;
     dly_fb = p->v[P_DLY_FB] * 250;              /* up to 0.97 */
@@ -200,65 +224,80 @@ static inline void rev_tick(int32_t in)
     rv_yr = (b * 19661) >> 15;
 }
 
-static void fx_process(int32_t *out, uint32_t n)
+/* a sound's ensemble on its own bus (stereo, both the same as the registers leave it), in place. The line holds half
+ * the level (the bus runs up to +-131k before the output stage); MIX crossfades to the lines, as the originals */
+static void ens_process(ens_t *e, int32_t *buf, uint32_t n)
 {
-    uint32_t i, do_ens = ens_active != 0, do_pha = pha_active != 0, do_dly = dly_active != 0, do_rev = rev_active != 0;
-    int32_t em = ens_mix, pm = pha_mix, dm = dly_mix, rm = rev_mix;
+    uint32_t i;
+    int32_t em = e->mix;
+    if (!e->active) return;
+    for (i = 0; i < n; i++) {                   /* three lines, 120 degrees apart on both LFOs, read with Hermite taps */
+        int32_t l = buf[2u * i], r = buf[2u * i + 1u], m = sat16(((l + r) >> 1) >> 1), t0, t1, t2, w0, w1, w2, wl, wr;
+        uint32_t ps = e->ph_s, pf = e->ph_f;
+        e->lp += ((m - e->lp) * 22000) >> 15;   /* the bucket brigade's input filter: two poles at ~8 kHz */
+        e->lp2 += ((e->lp - e->lp2) * 22000) >> 15;
+        line_write(&e->l, e->lp2);
+        if (e->cur_s < e->depth_s) e->cur_s++; else if (e->cur_s > e->depth_s) e->cur_s--;   /* DEPTH turned: the lines glide there */
+        if (e->cur_f < e->depth_f) e->cur_f++; else if (e->cur_f > e->depth_f) e->cur_f--;
+        w0 = (ENS_BASE << 16) + sin_q15(ps) * e->cur_s + sin_q15(pf) * e->cur_f;
+        w1 = (ENS_BASE << 16) + sin_q15(ps + 0x55555555u) * e->cur_s + sin_q15(pf + 0x55555555u) * e->cur_f;
+        w2 = (ENS_BASE << 16) + sin_q15(ps + 0xAAAAAAAAu) * e->cur_s + sin_q15(pf + 0xAAAAAAAAu) * e->cur_f;
+        e->ph_s += e->inc_s;
+        e->ph_f += e->inc_f;
+        t0 = line_read_q16_h(&e->l, w0);
+        t1 = line_read_q16_h(&e->l, w1);
+        t2 = line_read_q16_h(&e->l, w2);
+        if (e->mode == E_MONO) {                /* one output, as the originals: the three summed */
+            wl = wr = ((t0 + t1 + t2) * 11) >> 5;
+        } else if (e->mode == E_STEREO) {       /* line 1 left, 3 right, 2 in the middle */
+            wl = (t0 + (t1 >> 1)) * 22 >> 5;
+            wr = (t2 + (t1 >> 1)) * 22 >> 5;
+        } else {                                /* WIDE: 1 and 2 left, 3 and 1 inverted right: the widest field */
+            wl = (t0 + t1) * 11 >> 4;
+            wr = (t2 + t1 - (t0 >> 1)) * 11 >> 4;
+        }
+        e->lpl += ((wl - e->lpl) * 22000) >> 15;   /* the brigade's reconstruction filter: two poles at ~8 kHz, the cream */
+        e->lpl2 += ((e->lpl - e->lpl2) * 22000) >> 15;
+        e->lpr += ((wr - e->lpr) * 22000) >> 15;
+        e->lpr2 += ((e->lpr - e->lpr2) * 22000) >> 15;
+        buf[2u * i] = l + (((e->lpl2 << 1) - l) * em >> 8);
+        buf[2u * i + 1u] = r + (((e->lpr2 << 1) - r) * em >> 8);
+    }
+}
+
+/* a sound's phaser on its bus, in place, after its ensemble (as 1.x: the crossfade, at half the bus's level so the
+ * allpasses' products stay in 32 bits) */
+static void pha_process(pha_t *f, int32_t *buf, uint32_t n)
+{
+    uint32_t i;
+    int32_t pm = f->mix;
+    if (!f->active) return;
+    for (i = 0; i < n; i++) {                   /* six allpasses a side, swept together, the right a quarter turn on */
+        int32_t tl = tri_q(f->ph), tr = tri_q(f->ph + 0x40000000u), ch;
+        uint32_t ia = (uint32_t)clampi(64 + ((tl * f->depth) >> 12), 0, 127), ib = (uint32_t)clampi(64 + ((tr * f->depth) >> 12), 0, 127);
+        f->ph += f->inc;
+        for (ch = 0; ch < 2; ch++) {
+            int32_t in = buf[2u * i + (uint32_t)ch], a = PHA_A_Q15[ch ? ib : ia], x = (in >> 1) + ((f->fb_s[ch] * f->fb) >> 15), k;
+            x = clampi(x, -60000, 60000);
+            for (k = 0; k < 6; k++) {           /* y = -a x + x1 + a y1 */
+                int32_t y = ((-a * x) >> 15) + f->x[ch][k] + ((a * f->y[ch][k]) >> 15);
+                f->x[ch][k] = x;
+                f->y[ch][k] = y;
+                x = y;
+            }
+            f->fb_s[ch] = x;
+            buf[2u * i + (uint32_t)ch] = in + (((x << 1) - in) * pm >> 8);
+        }
+    }
+}
+
+/* the send effects side by side, each fed by its send bus; out gets their returns, MIX = the return's level */
+static void fx_process(int32_t *out, const int32_t *ds, const int32_t *rs, uint32_t n)
+{
+    uint32_t i, do_dly = dly_active != 0, do_rev = rev_active != 0;
+    int32_t dm = dly_mix, rm = rev_mix;
     for (i = 0; i < n; i++) {
         int32_t l = out[2u * i], r = out[2u * i + 1u];
-        if (do_ens) {                           /* three lines, 120 degrees apart on both LFOs, read with Hermite taps */
-            int32_t m = (l + r) >> 1, t0, t1, t2, w0, w1, w2;
-            uint32_t ps = ens_ph_s, pf = ens_ph_f;
-            ens_lp += ((m - ens_lp) * 22000) >> 15;   /* the bucket brigade's input filter: two poles at ~8 kHz */
-            ens_lp2 += ((ens_lp - ens_lp2) * 22000) >> 15;
-            line_write(&ens, ens_lp2);
-            if (ens_cur_s < ens_depth_s) ens_cur_s++; else if (ens_cur_s > ens_depth_s) ens_cur_s--;   /* DEPTH turned: the lines glide there */
-            if (ens_cur_f < ens_depth_f) ens_cur_f++; else if (ens_cur_f > ens_depth_f) ens_cur_f--;
-            w0 = (ENS_BASE << 16) + sin_q15(ps) * ens_cur_s + sin_q15(pf) * ens_cur_f;
-            w1 = (ENS_BASE << 16) + sin_q15(ps + 0x55555555u) * ens_cur_s + sin_q15(pf + 0x55555555u) * ens_cur_f;
-            w2 = (ENS_BASE << 16) + sin_q15(ps + 0xAAAAAAAAu) * ens_cur_s + sin_q15(pf + 0xAAAAAAAAu) * ens_cur_f;
-            ens_ph_s += ens_inc_s;
-            ens_ph_f += ens_inc_f;
-            t0 = line_read_q16_h(&ens, w0);
-            t1 = line_read_q16_h(&ens, w1);
-            t2 = line_read_q16_h(&ens, w2);
-            {
-                int32_t wl, wr;
-                if (ens_mode == E_MONO) {       /* one output, as the originals: the three summed */
-                    wl = wr = ((t0 + t1 + t2) * 11) >> 5;
-                } else if (ens_mode == E_STEREO) {   /* line 1 left, 3 right, 2 in the middle */
-                    wl = (t0 + (t1 >> 1)) * 22 >> 5;
-                    wr = (t2 + (t1 >> 1)) * 22 >> 5;
-                } else {                        /* WIDE: 1 and 2 left, 3 and 1 inverted right: the widest field */
-                    wl = (t0 + t1) * 11 >> 4;
-                    wr = (t2 + t1 - (t0 >> 1)) * 11 >> 4;
-                }
-                ens_lpl += ((wl - ens_lpl) * 22000) >> 15;   /* the brigade's reconstruction filter: two poles at ~8 kHz, the cream */
-                ens_lpl2 += ((ens_lpl - ens_lpl2) * 22000) >> 15;
-                ens_lpr += ((wr - ens_lpr) * 22000) >> 15;
-                ens_lpr2 += ((ens_lpr - ens_lpr2) * 22000) >> 15;
-                l += ((ens_lpl2 - l) * em) >> 8;
-                r += ((ens_lpr2 - r) * em) >> 8;
-            }
-        }
-        if (do_pha) {                           /* six allpasses a side, swept together, the right a quarter turn on */
-            int32_t tl = tri_q(pha_ph), tr = tri_q(pha_ph + 0x40000000u), c, ch;
-            uint32_t ia = (uint32_t)clampi(64 + ((tl * pha_depth) >> 12), 0, 127), ib = (uint32_t)clampi(64 + ((tr * pha_depth) >> 12), 0, 127);
-            pha_ph += pha_inc;
-            for (ch = 0; ch < 2; ch++) {
-                int32_t a = PHA_A_Q15[ch ? ib : ia], x = (ch ? r : l) + ((pha_fb_s[ch] * pha_fb) >> 15), k;
-                x = clampi(x, -60000, 60000);
-                for (k = 0; k < 6; k++) {       /* y = -a x + x1 + a y1 */
-                    int32_t y = ((-a * x) >> 15) + pha_x[ch][k] + ((a * pha_y[ch][k]) >> 15);
-                    pha_x[ch][k] = x;
-                    pha_y[ch][k] = y;
-                    x = y;
-                }
-                pha_fb_s[ch] = x;
-                c = x;
-                if (ch) r += ((c - r) * pm) >> 8; else l += ((c - l) * pm) >> 8;
-            }
-        }
         if (do_dly) {                           /* ping-pong: the input enters left, the feedback crosses */
             int32_t wl, wr;
             if (dly_cur < dly_time) { dly_cur += 1 << 15; if (dly_cur > dly_time) dly_cur = dly_time; }
@@ -267,14 +306,14 @@ static void fx_process(int32_t *out, uint32_t n)
             wr = line_read_q16(&dr, dly_cur);
             dly_lpl += ((wr - dly_lpl) * dly_tone_k) >> 8;
             dly_lpr += ((wl - dly_lpr) * dly_tone_k) >> 8;
-            line_write(&dl, ((l + r) >> 1) + ((dly_lpl * dly_fb) >> 15));
+            line_write(&dl, ds[i] + ((dly_lpl * dly_fb) >> 15));
             line_write(&dr, (dly_lpr * dly_fb) >> 15);
             l += (wl * dm) >> 8;
             r += (wr * dm) >> 8;
         }
         if (do_rev) {
 #if REV_DIV == 2u                               /* half rate: a pair in, the output interpolated between ticks */
-            int32_t pl = rv_yl, pr = rv_yr, din = l + r;
+            int32_t pl = rv_yl, pr = rv_yr, din = rs[i] * 2;
             if (!(fx_odd ^= 1u)) {
                 rev_tick((rv_hold + din) >> 2);
                 l += (((pl + rv_yl) >> 1) * rm) >> 8;
@@ -285,7 +324,7 @@ static void fx_process(int32_t *out, uint32_t n)
             }
             rv_hold = din;
 #else
-            rev_tick((l + r) >> 1);
+            rev_tick(rs[i]);
             l += (rv_yl * rm) >> 8;
             r += (rv_yr * rm) >> 8;
 #endif
@@ -294,3 +333,113 @@ static void fx_process(int32_t *out, uint32_t n)
         out[2u * i + 1u] = sat16(r);
     }
 }
+
+/* DRIVE, the 4th send: the tracks' drive sends distorted, its return beside the dry sound (parallel: the dry keeps its
+ * punch). Types OVERDRIVE (soft), DIST (harder, uneven), FUZZ (square), CRUSH (fewer bits, held samples); TONE a
+ * low-pass after it, MIX the return. Fixed point (VIBE's is float): tanh by the softclip table */
+enum { DV_OVERDRIVE, DV_DIST, DV_FUZZ, DV_CRUSH, NDV };
+static volatile uint8_t ctl_dv_type, ctl_dv_amt = 60, ctl_dv_tone = 90, ctl_dv_mix = 127;
+static int32_t dv_lp, dv_hold;                  /* Q15 */
+static uint32_t dv_n;
+static void drive_process(int32_t *out, const int32_t *vs, uint32_t n)
+{
+    uint32_t i, ty = ctl_dv_type % NDV, amt = ctl_dv_amt;
+    int32_t pre = 256 + (int32_t)(24u * 256u * amt / 127u);   /* Q8: 1 .. 25 */
+    int32_t k = 1311 + (int32_t)(31457u * ctl_dv_tone * ctl_dv_tone / 16129u);   /* Q15: 0.04 .. 1 */
+    int32_t ret = (int32_t)(ctl_dv_mix * 4000u / 127u);   /* (MIX full: the return about as loud as the dry sound) */
+    if (!ctl_dv_mix) return;
+    for (i = 0; i < n; i++) {
+        int32_t x = (vs[i] * pre) >> 9, y;      /* softclip(x) = tanh(the drive's x), Q15 */
+        if (ty == DV_OVERDRIVE) y = softclip(x);
+        else if (ty == DV_DIST) y = x > 0 ? softclip(x * 8 / 5) : (softclip(x * 7 / 10) * 4) / 5;
+        else if (ty == DV_FUZZ) y = clampi(x * 40, -32767, 32767);   /* (20 x the drive's x, square beyond 1/20) */
+        else {                                  /* CRUSH: 16 steps, a sample held for 2..12 */
+            if (!dv_n--) { dv_n = 2u + amt * 10u / 127u; dv_hold = softclip(x) * 8 / 32768 * 4096; }
+            y = dv_hold;
+        }
+        dv_lp += ((y - dv_lp) * k) >> 15;
+        {
+            int32_t v = (dv_lp * ret + 16384) >> 15;   /* (rounded: the one-pole's -1 it settles on stays silent) */
+            out[2u * i] = sat16(out[2u * i] + v);
+            out[2u * i + 1u] = sat16(out[2u * i + 1u] + v);
+        }
+    }
+}
+
+/* MASTER, the sum after the effects: DJ filter (one knob: below the middle low-pass, above high-pass), drive,
+ * compressor, volume, and a soft limiter above -2 dB that never lets it clip. Fixed point: the compressor's gain in
+ * log2 per control block (its level follower per sample), a line between blocks */
+static volatile uint8_t ctl_m_vol = 100, ctl_m_dj = 64, ctl_m_drive, ctl_m_comp;   /* (main loop writes) volume (100 =
+                                                 * unity), DJ filter (64 off, below LP, above HP), drive, compressor */
+static volatile uint32_t ui_out_peak;           /* the output's peak, for the MASTER row's meter (the UI takes it) */
+static svf_coef_t m_c;
+static svf_state_t m_fl, m_fr;
+static int32_t m_dj_was = 0x7FFF, m_env, m_g = 1 << 14;   /* m_env: the level follower Q23; m_g: the gain now, Q14 */
+
+static int32_t log2_q16(uint32_t x)             /* x > 0 -> log2(x) in Q16 (+-0.01) */
+{
+    int32_t e = 31, f;
+    if (!x) return -(32 << 16);
+    while (!(x >> e)) e--;
+    f = (int32_t)(e >= 16 ? x >> (e - 16) : x << (16 - e)) - 65536;   /* the mantissa - 1, Q16 */
+    return (e << 16) + f + (int32_t)(((int64_t)f * (65536 - f) * 22713) >> 32);   /* log2(1+f) ~ f + 0.3466 f (1-f) */
+}
+static int32_t exp2_q14(int32_t l)              /* 2^(l / 65536) in Q14, l within +-14 octaves */
+{
+    int32_t e = l >> 16, f = l & 0xFFFF, m;
+    m = 16384 + ((f * 10756) >> 16) + (int32_t)(((int64_t)f * f * 5628) >> 32);   /* 2^f ~ 1 + 0.6565 f + 0.3435 f^2 */
+    return e >= 0 ? (e > 14 ? 0x7FFFFFFF : m << e) : (e < -14 ? 0 : m >> -e);
+}
+
+static void master_process(int32_t *out, uint32_t n)
+{
+    int32_t dj = (int32_t)ctl_m_dj - 64, mode = dj <= -2 ? 1 : dj >= 2 ? 2 : 0, ad = dj < 0 ? -dj : dj;
+    uint32_t d = ctl_m_drive, cm = ctl_m_comp, i, b, pk = 0;
+    int32_t pre = 256 + (int32_t)(8u * 256u * d / 127u), post = (int32_t)(4096u * (127u + d) * 256u / (127u * (uint32_t)pre));
+    int32_t vol = (int32_t)(ctl_m_vol * ctl_m_vol * 4096u / 10000u);   /* Q12, 100 = unity, the square law */
+    if (dj != m_dj_was) {                       /* LP 18 kHz .. 60 Hz, HP 20 Hz .. 6 kHz, Q 1.1 */
+        svf_coef(&m_c, mode == 1 ? 34099 - ad * 395 : 3968 + ad * 395, 3724);
+        if (!mode || (m_dj_was <= -2) != (dj <= -2)) m_fl.ic1 = m_fl.ic2 = m_fr.ic1 = m_fr.ic2 = 0;
+        m_dj_was = dj;
+    }
+    for (b = 0; b < n; b += CTL) {
+        int32_t g0 = m_g, g1 = 1 << 14;
+        if (cm) {                               /* the gain at this block's end: from the level so far */
+            int32_t ex = (int32_t)(65536u * 5u * cm / (127u + 5u * cm));   /* Q16: the ratio's 1 - 1/r, 0 .. 0.83 */
+            int32_t thr = -(int32_t)((508u + 20u * cm) * 857u / 10u);      /* log2 Q16 of -4 .. -24 dB */
+            int32_t lv = log2_q16((uint32_t)(m_env >> 8) + 1u) - (15 << 16);   /* the level, log2 of full scale */
+            int32_t gl = (int32_t)(((int64_t)(-thr) * ex * 29491) >> 32);  /* make-up: (1/thr)^(0.45 ex) */
+            if (lv > thr) gl -= (int32_t)(((int64_t)(lv - thr) * ex) >> 16);
+            g1 = exp2_q14(gl);
+        }
+        m_g = g1;
+        for (i = b; i < b + CTL && i < n; i++) {
+            int32_t l = out[2u * i], r = out[2u * i + 1u], g = g0 + (((g1 - g0) * (int32_t)(i - b)) >> 4);
+            uint32_t al, ar;
+            if (mode && !(l | r) && (uint32_t)(m_fl.ic1 + 8) < 16u && (uint32_t)(m_fl.ic2 + 8) < 16u
+                && (uint32_t)(m_fr.ic1 + 8) < 16u && (uint32_t)(m_fr.ic2 + 8) < 16u)
+                m_fl.ic1 = m_fl.ic2 = m_fr.ic1 = m_fr.ic2 = 0;   /* (silence stays silence: no rounding hum of the states) */
+            else if (mode) {                    /* (at half the level: the filter's band-pass state stays linear) */
+                int32_t lp, bp, hp;
+                svf_step(&m_c, &m_fl, l >> 1, &lp, &bp, &hp); l = (mode == 1 ? lp : hp) << 1;
+                svf_step(&m_c, &m_fr, r >> 1, &lp, &bp, &hp); r = (mode == 1 ? lp : hp) << 1;
+            }
+            if (d) { l = (softclip((l * pre) >> 9) * post) >> 12; r = (softclip((r * pre) >> 9) * post) >> 12; }
+            if (cm) {                           /* the level follower: 3 ms up, 150 ms down */
+                int32_t p = (l < 0 ? -l : l) > (r < 0 ? -r : r) ? (l < 0 ? -l : l) : (r < 0 ? -r : r);
+                int32_t e = clampi(p, 0, 65535) << 8;
+                m_env += e > m_env ? (int32_t)(((int64_t)(e - m_env) * 495) >> 16) : (int32_t)(((int64_t)(e - m_env) * 10) >> 16);
+                l = (int32_t)(((int64_t)l * g) >> 14); r = (int32_t)(((int64_t)r * g) >> 14);
+            }
+            l = (l * vol) >> 12; r = (r * vol) >> 12;
+            al = (uint32_t)(l < 0 ? -l : l); ar = (uint32_t)(r < 0 ? -r : r);
+            if (al > 26214u) { int32_t y = 26214 + softclip(((int32_t)al - 26214) * 5 / 2) / 5; l = l < 0 ? -y : y; }
+            if (ar > 26214u) { int32_t y = 26214 + softclip(((int32_t)ar - 26214) * 5 / 2) / 5; r = r < 0 ? -y : y; }
+            if (al > pk) pk = al;
+            if (ar > pk) pk = ar;
+            out[2u * i] = l; out[2u * i + 1u] = r;
+        }
+    }
+    if (pk > ui_out_peak) ui_out_peak = pk;
+}
+

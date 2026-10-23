@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// The browser simulator without a browser: loads docs/sim/obervave.wasm in node, boots it, plays a chord, MIDI notes,
+// The browser simulator without a browser: loads docs/sim/shineon.wasm in node, boots it, plays a chord, MIDI notes,
 // a button, knob turns, renders seconds of sound and checks: it sounds, no NaN, no clipping, the screen changes, and
 // it renders far faster than real time. Then the same script through the native host build (tests/host.c): the
 // sound must be the same samples (the simulator renders a block ahead, as the device's ISR: 256 frames later in
 // time) and the screens the same pixels.
-//   node tests/sim_test.mjs [docs/sim/obervave.wasm]      (after sh web/sim/build.sh)
+//   node tests/sim_test.mjs [docs/sim/shineon.wasm]      (after sh web/sim/build.sh)
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const WASM = process.argv[2] || path.join(ROOT, 'docs/sim/obervave.wasm');
+const WASM = process.argv[2] || path.join(ROOT, 'docs/sim/shineon.wasm');
 let fail = 0;
 const check = (ok, what) => { console.log((ok ? '  ok    ' : '  FAIL  ') + what); if (!ok) fail = 1; };
 
@@ -109,7 +109,7 @@ check(ex.sim_leds_buttons() !== 0, `button LEDs (0x${ex.sim_leds_buttons().toStr
 // storage: SAVE twice keeps the program in the settings sector (written ~2 s later, when quiet); a new instance with
 // those bytes boots on it
 {
-  check(ex.sim_blob_size() === 4088 && ex.sim_blob(0) !== 0 && ex.sim_blob(9) === 0, 'storage blobs exported');
+  check(ex.sim_blob_size() === 16384 && ex.sim_blob(0) !== 0 && ex.sim_blob(9) === 0, 'storage blobs exported');
   const h0 = ex.sim_store_hash(), tap = (b) => { ex.sim_button(b, 1); for (let i = 0; i < 20; i++) ex.sim_render(128); ex.sim_button(b, 0); for (let i = 0; i < 20; i++) ex.sim_render(128); };
   tap(8);                                               // HOME: PERFORM
   ex.sim_enc(2, 7);                                     // KNOB 1 (CUTOFF) +7: the program is edited
@@ -133,7 +133,7 @@ check(ex.sim_leds_buttons() !== 0, `button LEDs (0x${ex.sim_leds_buttons().toStr
   let Proc = null;
   const ctx = {
     AudioWorkletProcessor: class { constructor() { this.port = { postMessage: (m) => posted.push(m), onmessage: null }; } },
-    registerProcessor: (name, c) => { if (name === 'obervave') Proc = c; },
+    registerProcessor: (name, c) => { if (name === 'shineon') Proc = c; },
     currentTime: 0, WebAssembly, Float32Array, Uint16Array, Uint8Array, Error, String,
   };
   vm.runInNewContext(fs.readFileSync(path.join(path.dirname(WASM), 'worklet.js'), 'utf8'), ctx);
@@ -156,11 +156,11 @@ check(ex.sim_leds_buttons() !== 0, `button LEDs (0x${ex.sim_leds_buttons().toStr
 }
 
 // the native host build, same script: the same samples and the same screens
-const host = path.join(ROOT, 'build/host/obervave-simcmp');
+const host = path.join(ROOT, 'build/host/shineon-simcmp');
 let haveCC = true;
 try {
   fs.mkdirSync(path.join(ROOT, 'build/host'), { recursive: true });
-  execFileSync('cc', ['-O2', '-w', '-DOBV_HOST', '-Ifirmware/src', '-Ifirmware/gen', '-o', host, 'firmware/src/obervave.c'], { cwd: ROOT });
+  execFileSync('cc', ['-O2', '-w', '-DOBV_HOST', '-Ifirmware/src', '-Ifirmware/gen', '-o', host, 'firmware/src/shineon.c'], { cwd: ROOT });
 } catch (e) { haveCC = false; console.log('  (no cc: the comparison with the host build is skipped)'); }
 if (haveCC) {
   fs.writeFileSync(host + '.txt', SCRIPT);
