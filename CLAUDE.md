@@ -56,7 +56,7 @@ engine and the ensemble are new. GPL-3.0. Identity `FM-1_96N`. Name by the user 
 
 ## Status
 
-**3.5 (2026-11-12, not released yet: the user tests on the FM-1 first)**: OberVave 3.0.1 -> 3.5 merged in (git merge-file,
+**3.5 (2026-11-12, tag v3.5, FM-1_9635; tried on the user's FM-1: "sieht gut aus"; SMK-37 stays 3.0.1-beta)**: OberVave 3.0.1 -> 3.5 merged in (git merge-file,
 base obervave v3.0.1:obervave.c; 5 conflicts, all SAVE / pages): MEMORY (SAVE = 8 slots with everything, no auto-save,
 LOAD reverts; see OberVave's CLAUDE.md), VIBE LINK (shn_link.h), backup (shn_backup.h, OberVave's protocol 'O' 'B'),
 FM-1 Mirror (shn_mirror.h, lcd.c's LCD_MIRROR, screen_mirror/), the UC25HQ80 flash (hal/fm1_flash_map.h). The sound:
