@@ -16,7 +16,12 @@ compressor); the tracks start and stop on the bar, every pattern keeps its sound
 
 <p align="center"><img src="docs/screen.png" width="240" alt="Shine On's screen: program 01 ENSEMBLE, the PERFORM page with four knobs, the scope, sixteen keyer LEDs"></p>
 
-> **Released: 3.0.1** (`docs/firmware/shineon-3.0.1.fwsc`, identity `FM-1_9630`, its own: 3.0 reported the shared `FM-1_960`; on the Firmware Hub, built and signed by
+> **Released: 3.5** (`docs/firmware/shineon-3.5.fwsc`, identity `FM-1_9635`): OberVave 3.5's news in Shine On:
+> **MEMORY** (SAVE opens the 8 slots, each with everything; no auto-save, LOAD goes back), **VIBE LINK**, a **backup**
+> of programs, patterns and settings over USB, **FM-1 Mirror**, the newer FM-1s' flash chip (UC25HQ80), soft knees
+> instead of the last hard clamps in the sound. All versions: [CHANGELOG.md](CHANGELOG.md).
+>
+> **3.0.1** (`docs/firmware/shineon-3.0.1.fwsc`, identity `FM-1_9630`, its own: 3.0 reported the shared `FM-1_960`; on the Firmware Hub, built and signed by
 > this repository's workflow). 3.0 is OberVave 3.0's four
 > tracks, mixer and sequencer with Shine On's engine: 1.x's settings and patterns come over on the first start (the old
 > patterns stay in the flash). Four full string sounds at once cost about twice the CPU of one: watch the time on the
@@ -56,7 +61,7 @@ registers) / BRASS + SPLIT / TONE (TONE, WARMTH, BRIGHT, VELOCITY). **ENV** KEYE
 **LFO** VIBRATO. **ARP** the arpeggiator (on its page the ARP button is HOLD, each track its own). **FX** ENSEMBLE /
 PHASER (the track's sound's) / DELAY / REVERB / DRIVE (the song's). **GLO** GLOBAL (TEMPO, CLICK, MIDI CH, TUNE; the
 CPU time and the sync in its title) / OUTPUT (VINTAGE, OCTAVE, BEND, VOLUME). **PRESETS** the chosen track's program,
-**SAVE** twice saves it (PRESETS in between: into another slot), SAVE held + SELECT pressed: a new sound at random.
+**SAVE** opens MEMORY (below; its SOUND action stores the track's sound as a program), SAVE held + SELECT pressed: a new sound at random. On OUTPUT, SELECT pressed: **VIBE LINK** (OFF / ON / CONTROL: the FM-1 as the VIBE FM's controller).
 
 ## The panel
 
@@ -69,7 +74,7 @@ while a layer is held locks it open; its button lets it go.
 | **GLO** | white 1-4 (F3 .. B3): start / stop track A-D on the bar (REC lit: record it); 5-8: mute A-D; 9-12: solo A-D; G5: tap tempo | - | GLOBAL / OUTPUT |
 | **SEQ** | steps 1-16 of the page (tap: set with the last note or chord / clear; hold + a later step: one long note); black keys F#3 .. A#4: page 1-8 | NOTE · DIV · SWING · LENGTH; a step held: NOTE · LEVEL · RATCHET · GATE | the sequencer (full screen); again: its next view |
 | **EDIT** | erase that note (playing: as the playhead passes) | SHIFT · LENGTH x2 / 1/2 · TRANSPOSE | STRINGS / BRASS + SPLIT / TONE; in STEPS: clear the step |
-| **SAVE** | white 1-8: go to pattern 1-8; black 1-8 (F#3 .. A#4): copy this pattern there (with SELECT pressed: a random sound) | - | twice: save the track's program (PRESETS in between: into another slot); in the sequencer: SAVE PATTERN?, again: saved |
+| **SAVE** | with SELECT pressed: a random sound | - | MEMORY (below); there: do the chosen action |
 | **FX** | notes | ENSEMBLE · PHASER (the track's) · DELAY · REVERB mix | ENSEMBLE / PHASER / DELAY / REVERB / DRIVE |
 
 - **ALGORITHM** picks the track (A-D, in its colour: amber, light blue, green, pink): the keys play its sound, every
@@ -106,9 +111,13 @@ and, for a track longer than a bar, where it plays (`2/4` and a line a piece per
 - **Recording:** REC on every page, onto the chosen track, on its grid or as played; legato up to the next note of the
   take; with the arp on, the arp's notes, each round replacing the last.
 - **Patterns:** SELECT in the sequencer or the MIXER goes to the next / previous one (stopped at once, playing on the
-  next bar, its sounds and mix with it); SAVE held + a white key 1-8 goes there, + a black key copies this one there.
-- **Saving:** SAVE in the sequencer asks `SAVE PATTERN?`, SAVE again saves (playing: at the stop); a pattern saves
-  itself 3 s after a change once the sequencer stands.
+  next bar, its sounds and mix with it). With unsaved changes the first turn only warns, the second goes.
+- **Saving: MEMORY** (3.5, as OberVave 3.5). SAVE tapped opens the 8 slots; a slot holds everything (the steps of the
+  four tracks, their sounds, the mixer, the effects, MASTER). What you play is a working copy of the slot loaded last;
+  **nothing saves itself**, a `*` marks changes not saved yet. KNOB 1 (or PRESETS) the slot, KNOB 2 (or SELECT) the
+  action, SAVE does it: **SAVE** (another used slot: SAVE again), **LOAD** (the slot you are on: back to how it was
+  saved), **COPY** / **PASTE** (through a clipboard into the working copy), **INIT**, **SOUND** (the track's sound into
+  a program 1-99). SAVE, SAVE saves what you hear.
 
 ## Build and run
 

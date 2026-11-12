@@ -632,14 +632,14 @@ static void regs_render(part_t *g, uint32_t n, int32_t *dst)
         }
         m = (m * 9) >> 5;                       /* x 0.28 (the keyers come in at a quarter): a five-note chord on two registers
                                                  * drives the output stage's tanh to ~0.7 (-4 dBFS): it stays open, not squashed */
-        m = clampi(m, -120000, 120000);
+        m = knee_hi(m);                        /* (3.5: was a hard clamp at +-120000) */
         m = svf_out(&g->tone_c, &r->tone, m, 0);   /* TONE */
         if (wq) m = softclip(((m >> 3) * wq) >> 9) << 1;   /* WARMTH: into the tanh and out again */
         if (bq) {                               /* BRIGHT: a presence lift above ~3 kHz */
             r->br_lp += ((m - r->br_lp) * 11000) >> 15;
             m += ((m - r->br_lp) * bq) >> 8;
         }
-        m = clampi(m, -131000, 131000);
+        m = knee_hi(m);                        /* (3.5: was a hard clamp at +-131000) */
         dst[2u * i] += m;
         dst[2u * i + 1u] += m;
     }
@@ -732,9 +732,9 @@ static void engine_audio(int32_t *out, uint32_t n)
         sc_prev = m;
     }
     for (i = 0; i < n; i++) {                   /* the sends at the output's scale (the effects work after the output stage) */
-        snd_d[i] = sat16((clampi(snd_d[i], -262144, 262143) >> 2) * vol_q12 >> 10);
-        snd_r[i] = sat16((clampi(snd_r[i], -262144, 262143) >> 2) * vol_q12 >> 10);
-        snd_v[i] = sat16((clampi(snd_v[i], -262144, 262143) >> 2) * vol_q12 >> 10);
+        snd_d[i] = knee16((clampi(snd_d[i], -262144, 262143) >> 2) * vol_q12 >> 10);   /* (3.5: soft, was sat16) */
+        snd_r[i] = knee16((clampi(snd_r[i], -262144, 262143) >> 2) * vol_q12 >> 10);   /* (3.5: soft, was sat16) */
+        snd_v[i] = knee16((clampi(snd_v[i], -262144, 262143) >> 2) * vol_q12 >> 10);   /* (3.5: soft, was sat16) */
     }
     fx_process(out, snd_d, snd_r, n);
     drive_process(out, snd_v, n);

@@ -56,6 +56,14 @@ engine and the ensemble are new. GPL-3.0. Identity `FM-1_96N`. Name by the user 
 
 ## Status
 
+**3.5 (2026-11-12, not released yet: the user tests on the FM-1 first)**: OberVave 3.0.1 -> 3.5 merged in (git merge-file,
+base obervave v3.0.1:obervave.c; 5 conflicts, all SAVE / pages): MEMORY (SAVE = 8 slots with everything, no auto-save,
+LOAD reverts; see OberVave's CLAUDE.md), VIBE LINK (shn_link.h), backup (shn_backup.h, OberVave's protocol 'O' 'B'),
+FM-1 Mirror (shn_mirror.h, lcd.c's LCD_MIRROR, screen_mirror/), the UC25HQ80 flash (hal/fm1_flash_map.h). The sound:
+knee_hi / knee16 (shn_dsp.h) instead of the hard clamps after the registers and in the sends; bit-identical at normal
+levels (strings.txt, v3_tracks.txt), tests/knee.txt = a 16-key all-register chord. The softclip comment fixed (unity
+slope). Tight now: SMK RAM 97776 of 98304, pool 342760 of 344064 (the clipboard). CHANGELOG.md = the release text.
+
 **3.0** (2026-10-23, branch v3, not on a device yet): OberVave 3.0's four tracks, mixer, patterns with their sounds and
 mix, 3.0's recording and panel, merged in (git merge-file from OberVave main -> v3). Shine's own: the 16 keyers shared
 by 4 sounds, each sound with its own registers, **ensemble and phaser** (a program brings them, as on 1.x; ensp/phap in

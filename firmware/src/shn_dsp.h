@@ -8,7 +8,7 @@
 
 static inline int32_t clampi(int32_t v, int32_t lo, int32_t hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-/* tanh(x / 32768 * 2) * 32767, interpolated: x = +-32768 -> +-0.76 full scale, +-65536 -> +-0.96 */
+/* tanh(x / 32768) * 32767, interpolated (unity slope; +-32768 -> +-0.76 full scale, +-65536 and beyond -> +-0.96) */
 static inline __attribute__((always_inline)) int32_t softclip(int32_t x)
 {
     int32_t a = x < 0 ? -x : x, i = a >> 8, y;
@@ -17,6 +17,23 @@ static inline __attribute__((always_inline)) int32_t softclip(int32_t x)
     else
         y = TANH_Q15[i] + (((TANH_Q15[i + 1] - TANH_Q15[i]) * (a & 255)) >> 8);
     return x < 0 ? -y : y;
+}
+
+/* (3.5, as OberVave 3.3) soft knees instead of hard clamps: linear up to the knee, then a tanh into the room above it.
+ * knee_hi: linear to 98304, then up to ~130000 (the registers' sum); knee16: linear to 24576, then up to ~32500 */
+static inline __attribute__((always_inline)) int32_t knee_hi(int32_t x)
+{
+    int32_t a = x < 0 ? -x : x;
+    if (a <= 98304) return x;
+    a = 98304 + softclip(a - 98304);
+    return x < 0 ? -a : a;
+}
+static inline __attribute__((always_inline)) int32_t knee16(int32_t x)
+{
+    int32_t a = x < 0 ? -x : x;
+    if (a <= 24576) return x;
+    a = 24576 + (softclip((a - 24576 > 65536 ? 65536 : a - 24576) * 4) >> 2);
+    return x < 0 ? -a : a;
 }
 
 static inline uint32_t xorshift(uint32_t *st)
