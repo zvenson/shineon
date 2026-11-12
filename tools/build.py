@@ -62,7 +62,7 @@ BOARD_PREFIX = {"fm1": "FM-1_96", "smk37": "SMK-37 Pro_96"}   # identity: prefix
 BOARD_DEFS = {"fm1": [], "smk37": ["-DBOARD_SMK37=1"]}       # the FM-1 build gets no new flag (byte-identical)
 # smk37: the keyboard's model name (MODEL env or --model); one hardware, three names. pro adds no flag
 MODELS = {"pro": "SMK-37 Pro", "elite": "SMK-37 Elite", "mke": "MKE-P37"}
-SMK_DATA_FAMILY = "OBERVAV"         # the SMK store's owner tag (platform.c smk_owner_check): 1..7 of A-Z 0-9
+SMK_DATA_FAMILY = "SHINEON"        # (3.5; up to 3.0 "OBERVAV", OberVave's: platform.c takes that over once when the settings are ours)         # the SMK store's owner tag (platform.c smk_owner_check): 1..7 of A-Z 0-9
 VERSION = None                      # APP_VER for release builds
 
 

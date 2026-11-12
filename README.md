@@ -19,7 +19,8 @@ compressor); the tracks start and stop on the bar, every pattern keeps its sound
 > **Released: 3.5** (`docs/firmware/shineon-3.5.fwsc`, identity `FM-1_9635`): OberVave 3.5's news in Shine On:
 > **MEMORY** (SAVE opens the 8 slots, each with everything; no auto-save, LOAD goes back), **VIBE LINK**, a **backup**
 > of programs, patterns and settings over USB, **FM-1 Mirror**, the newer FM-1s' flash chip (UC25HQ80), soft knees
-> instead of the last hard clamps in the sound. All versions: [CHANGELOG.md](CHANGELOG.md).
+> instead of the last hard clamps in the sound, and **its own store** (OberVave's programs and patterns are no longer
+> read or overwritten; on the first start Shine On's come over). All versions: [CHANGELOG.md](CHANGELOG.md).
 >
 > **3.0.1** (`docs/firmware/shineon-3.0.1.fwsc`, identity `FM-1_9630`, its own: 3.0 reported the shared `FM-1_960`; on the Firmware Hub, built and signed by
 > this repository's workflow). 3.0 is OberVave 3.0's four

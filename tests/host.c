@@ -184,6 +184,13 @@ static int slot_save(uint32_t i, const void *a, uint32_t na, const void *b, uint
     printf("%6u ms  pattern slot %u saved (%u + %u B)\n", fm1_ms, i, na, nb);
     return 0;
 }
+static int settings_version(void)               /* (3.5: whose settings; a 1.x test store is made first, as settings_load would) */
+{
+    static int k;
+    uint8_t d[8];
+    if (!k && getenv("OBV_V15")) { k = 1; settings_load(d, 8); }
+    return host_store[0] == 1 ? host_store[4] : -1;
+}
 #define NPSECT 2u
 #define host_psect ((uint8_t (*)[4096])(host_store + 4096))   /* (in the settings' blob after them: the simulator keeps
                                                  * the programs with the settings) */

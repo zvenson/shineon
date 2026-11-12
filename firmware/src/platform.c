@@ -125,16 +125,22 @@ static volatile uint32_t fm1_ms;                /* milliseconds since power-on (
 #define SETTINGS_MAX (4096u - 12u)              /* the sector minus the header (OberVave keeps 32 programs in it) */
 #define BLOBS_AT 0x000F4000u                    /* OberVave's sequencer patterns: 8 sectors below the settings, free on the FM-1 */
 #define NBLOB 8u
-#define PSECT_AT 0x00097000u                    /* the 99 programs: 2 sectors at the start of Felucca's store (FL_DATA) */
+#define PSECT_AT 0x000B9000u                    /* (Shine On 3.5) the 99 programs: 2 sectors of our own in Felucca's store (FL_DATA),
+                                                 * after OberVave's (it has 0x97000..0xB8FFF): the two never read each other's */
 #define NPSECT 2u
-#define SLOTS_AT 0x00099000u                    /* (3.0) the patterns of four tracks: NBLOB slots of SLOT_SECT sectors, after the
-                                                 * programs in FL_DATA (0x99000..0xB8FFF) */
+#define SLOTS_AT 0x000BB000u                    /* (3.5) the patterns of four tracks: NBLOB slots of SLOT_SECT sectors, 0xBB000..0xDAFFF */
 #define SLOT_SECT 4u
+#define OLD_PSECT_AT 0x00097000u                /* (3.0's, shared with OberVave: only read, once, to move ours over) */
+#define OLD_SLOTS_AT 0x00099000u
 #define FL_RANGE_OK(off, n) (FL_IN(off, n, FL_OTA_LO, FL_OTA_HI) || FL_IN(off, n, SETTINGS_AT, SETTINGS_AT + 0x1000u) || \
                              FL_IN(off, n, BLOBS_AT, BLOBS_AT + NBLOB * 0x1000u) || FL_IN(off, n, PSECT_AT, PSECT_AT + NPSECT * 0x1000u) || \
                              FL_IN(off, n, SLOTS_AT, SLOTS_AT + NBLOB * SLOT_SECT * 0x1000u))
 #endif
 #include "fm1_flash.h"
+#ifdef OLD_SLOTS_AT
+_Static_assert(PSECT_AT + NPSECT * 0x1000u <= SLOTS_AT && SLOTS_AT + NBLOB * SLOT_SECT * 0x1000u <= FL_DATA_HI
+               && PSECT_AT >= OLD_SLOTS_AT + NBLOB * SLOT_SECT * 0x1000u, "Shine On's store: outside FL_DATA or over OberVave's");
+#endif
 static uint8_t flash_ok;
 static int st_read(uint32_t off, void *dst, uint32_t n)
 {
@@ -263,15 +269,16 @@ static uint32_t crc32_more(uint32_t c, const uint8_t *p, uint32_t n)   /* (crc32
     }
     return ~c;
 }
-static int slot_load(uint32_t i, void *a, uint32_t na, void *b, uint32_t nb)
+static int slot_load_at(uint32_t base, uint32_t i, void *a, uint32_t na, void *b, uint32_t nb)
 {
-    uint32_t h[4], at = SLOTS_AT + i * SLOT_SECT * 0x1000u;
+    uint32_t h[4], at = base + i * SLOT_SECT * 0x1000u;
     if (!flash_ok || i >= NBLOB || na + nb > SLOT_MAX || st_read(at, h, sizeof h) || h[0] != SLOT_MAGIC || h[1] != na || h[2] != nb)
         return -1;
     if (st_read(at + sizeof h, a, na) || st_read(at + sizeof h + na, b, nb))
         return -1;
     return crc32_more(crc32_more(0, a, na), b, nb) == h[3] ? 0 : -1;
 }
+static int slot_load(uint32_t i, void *a, uint32_t na, void *b, uint32_t nb) { return slot_load_at(SLOTS_AT, i, a, na, b, nb); }
 static int slot_save(uint32_t i, const void *a, uint32_t na, const void *b, uint32_t nb)   /* a, b in RAM */
 {
     uint32_t h[4] = {SLOT_MAGIC, na, nb, 0}, at = SLOTS_AT + i * SLOT_SECT * 0x1000u, k, took;
@@ -290,6 +297,19 @@ static int slot_save(uint32_t i, const void *a, uint32_t na, const void *b, uint
 }
 /* program sector i (0..NPSECT-1): the same format (OberVave: 50 user programs each) */
 static int psect_load(uint32_t i, void *p, uint32_t n) { return i < NPSECT ? sector_load(PSECT_AT + i * 0x1000u, p, n) : -1; }
+#ifdef OLD_SLOTS_AT                             /* (3.5) where 3.0 kept them, shared with OberVave: read only */
+static int psect_load_old(uint32_t i, void *p, uint32_t n) { return i < NPSECT ? sector_load(OLD_PSECT_AT + i * 0x1000u, p, n) : -1; }
+static int slot_load_old(uint32_t i, void *a, uint32_t na, void *b, uint32_t nb) { return slot_load_at(OLD_SLOTS_AT, i, a, na, b, nb); }
+#endif
+/* the settings sector's first byte (the app's version), or -1: whose settings they are, whatever their size */
+static int settings_version(void)
+{
+    uint32_t h[3];
+    uint8_t v;
+    if (!flash_ok || st_read(SETTINGS_AT, h, sizeof h) || h[0] != SETTINGS_MAGIC || st_read(SETTINGS_AT + sizeof h, &v, 1))
+        return -1;
+    return v;
+}
 static int psect_save(uint32_t i, const void *p, uint32_t n)
 {
     if (i >= NPSECT) return -1;
@@ -297,6 +317,9 @@ static int psect_save(uint32_t i, const void *p, uint32_t n)
     return sector_save(PSECT_AT + i * 0x1000u, p, n);
 }
 #if BOARD_SMK37
+#define SMK_LEGACY_FAMILY "OBERVAV"             /* (Shine On up to 3.0 used OberVave's tag; now its own, SHINEON) */
+#define SHN_SET_V3 0x54                         /* Shine On's settings versions (shineon.c SET_VERSION; 1.x) */
+#define SHN_SET_V1 0x53
 /* the store's owner (the kit's convention, smk_store.h): our tag, load as ever; anything else (the stock settings,
  * another port's data) is cleared once and the tag written, before the audio starts */
 static uint8_t smk_store_cleared, smk_trim_ok;   /* (the panel check shows them) */
@@ -314,6 +337,20 @@ static void smk_owner_check(void)
         ours &= tag[i] == want[i];
     if (ours)
         return;
+#ifdef SMK_LEGACY_FAMILY
+    {   /* (Shine On 3.5) up to 3.0 Shine tagged the store as OberVave's: still ours if the settings are Shine's */
+        static const char OLD[] = "SMK37DATA" SMK_LEGACY_FAMILY;
+        int v;
+        for (i = 0, ours = 1; i < 16u; i++)
+            ours &= tag[i] == (i < sizeof OLD - 1u ? (uint8_t)OLD[i] : 0u);
+        v = ours ? settings_version() : -1;
+        if (v == SHN_SET_V3 || v == SHN_SET_V1) {
+            fl_erase4k(OWNER_AT, &took);
+            fl_write(OWNER_AT, want, 16);
+            return;
+        }
+    }
+#endif
     fl_erase4k(SETTINGS_AT, &took);
     for (i = 0; i < NBLOB; i++) {
         fm1_wdt_feed();                         /* (~50 ms an erase) */

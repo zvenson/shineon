@@ -62,7 +62,11 @@ LOAD reverts; see OberVave's CLAUDE.md), VIBE LINK (shn_link.h), backup (shn_bac
 FM-1 Mirror (shn_mirror.h, lcd.c's LCD_MIRROR, screen_mirror/), the UC25HQ80 flash (hal/fm1_flash_map.h). The sound:
 knee_hi / knee16 (shn_dsp.h) instead of the hard clamps after the registers and in the sends; bit-identical at normal
 levels (strings.txt, v3_tracks.txt), tests/knee.txt = a 16-key all-register chord. The softclip comment fixed (unity
-slope). Tight now: SMK RAM 97776 of 98304, pool 342760 of 344064 (the clipboard). CHANGELOG.md = the release text.
+slope). Its own store (the user: overwriting OberVave's data): FM-1 PSECT_AT 0xB9000, SLOTS_AT 0xBB000..0xDAFFF
+(OberVave's 0x97000..0xB8FFF stays theirs, only read once by store_move at the first 3.5 start: programs by PS_TAG,
+patterns only when settings_version() == 0x54); 1.x blobs read only when the settings were ours (v1_ok); 3.0's
+settings (2 bytes shorter) load. SMK: family SHINEON (was OberVave's OBERVAV: smk_owner_check takes that over once
+when the settings are Shine's, else clears). Tight now: SMK RAM 97776 of 98304, pool 342760 of 344064 (the clipboard). CHANGELOG.md = the release text.
 
 **3.0** (2026-10-23, branch v3, not on a device yet): OberVave 3.0's four tracks, mixer, patterns with their sounds and
 mix, 3.0's recording and panel, merged in (git merge-file from OberVave main -> v3). Shine's own: the 16 keyers shared

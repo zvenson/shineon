@@ -279,6 +279,7 @@ typedef struct {
     uint8_t mute, solo, fx[NFXP], dv_type, dv_amt, dv_tone, dv_mix, m_vol, m_dj, m_drive, m_comp;
 } mixset_t;
 typedef struct { uint32_t magic; uint8_t prog[NTRK], edited[NTRK]; patch_t p[NTRK]; mixset_t mx; } psnd_t;
+static uint32_t v1_ok;                          /* (3.5) the settings were Shine On's: its old 1.x patterns may be read */
 static psnd_t psnd[NPAT], psnd_tmp;              /* psnd[n]: slot n's set as saved (or, never saved, as it was first played) */
 static psnd_t clip_snd;                         /* MEMORY's COPY: the sounds and mix (the steps in clip_pat) */
 static pattern_t clip_pat __attribute__((section(".pool")));
@@ -383,7 +384,7 @@ static int pat_from_v1(uint32_t n, pattern_t *p)
     static pattern1_t o __attribute__((section(".pool")));
     uint32_t i, t, bp, bdry;
     n %= NPAT;
-    if (blob_load(n, &o, sizeof o) || o.magic != PAT1_MAGIC) return -1;
+    if (!v1_ok || blob_load(n, &o, sizeof o) || o.magic != PAT1_MAGIC) return -1;   /* (OberVave's 1.x share the place) */
     pat_init(p);
     for (t = 0; t < 2u; t++) {
         uint32_t len = o.trk[t].len > SEQ_STEPS ? SEQ_STEPS : o.trk[t].len;
@@ -1245,6 +1246,29 @@ static void entry_note(uint32_t on, uint32_t note, uint32_t vel)
 
 static void entry_reset(void) { entry_n = 0; memset(entry_on_note, 0, sizeof entry_on_note); }
 
+/* (3.5) Shine On's own store: up to 3.0 its programs and patterns were where OberVave keeps them (0x97000 ..), so the
+ * two read each other's. Now ours are at 0xB9000 ..; on the first start the old ones come over: the programs by their
+ * tag (SHNP is ours), the patterns only when the settings sector says Shine On ran last (else they are OberVave's).
+ * Nothing in the old place is changed. The program sectors are written in any case: the move happens once */
+#ifdef OLD_SLOTS_AT
+static void store_move(uint32_t pats)
+{
+    uint32_t n;
+    lcd_fill(0, 0, 240, 240, C_PANEL);
+    draw_text_box(0, 104, 240, &FONT_S, "SHINE ON: ITS OWN STORE", C_AMBER, 1);
+    draw_text_box(0, 124, 240, &FONT_S, "moving your programs and patterns", C_DIMT, 1);
+    for (n = 0; n < NPSECT; n++) {
+        psect_t o;
+        if (!psect_load_old(n, &o, sizeof o) && o.tag == PS_TAG) psect[n] = o;
+        psect_save(n, &psect[n], sizeof psect[n]);
+    }
+    for (n = 0; pats && n < NBLOB; n++)
+        if (!slot_load_old(n, &undo_pat, sizeof undo_pat, &psnd_tmp, sizeof psnd_tmp) && undo_pat.magic == PAT_MAGIC)
+            slot_save(n, &undo_pat, sizeof undo_pat, &psnd_tmp, sizeof psnd_tmp);
+    memset(&undo_pat, 0, sizeof undo_pat);
+}
+#endif
+
 /* which slots hold a pattern, its tracks' lengths, and every pattern's sounds (at boot; undo_pat as the buffer) */
 static void slot_lens_read(void)
 {
@@ -2081,14 +2105,22 @@ static void app_main(void)
     engine_init();
     cc_map_init();
     {
-        uint32_t n;
+        uint32_t n, have = 0;
+        int sv = settings_version();            /* whose the settings sector is: Shine On's (0x54, 1.x 0x53), or not */
+        v1_ok = sv == SET_VERSION || sv == 0x53;   /* (the old one-sector patterns are shared with OberVave 1.x: only if ours) */
         for (n = 0; n < NPSECT; n++)
             if (psect_load(n, &psect[n], sizeof psect[n]) || psect[n].tag != PS_TAG) {
                 memset(&psect[n], 0, sizeof psect[n]);
                 psect[n].tag = PS_TAG;
-            }
+            } else have = 1;
+#ifdef OLD_SLOTS_AT
+        if (!have) store_move(sv == SET_VERSION);   /* (3.5) the first start: ours over from where 3.0 shared them with OberVave */
+#else
+        (void)have;
+#endif
         set.version = 0;
-        if (settings_load(&set, sizeof set) || set.version != SET_VERSION) {   /* first start, 1.x, or another app's sector */
+        if ((settings_load(&set, sizeof set) && settings_load(&set, sizeof set - 2u)) || set.version != SET_VERSION) {   /* first start,
+                                                 * 1.x, or another app's sector (3.0's: two bytes shorter, without the link) */
             set_v3_t o3;
             memset(&set, 0, sizeof set);
             set.version = SET_VERSION;

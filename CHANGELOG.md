@@ -16,6 +16,12 @@ Shine On for the M-VAVE FM-1 (and, as a beta, the M-Vave SMK-37). Newest first. 
   as tempo and MIDI channel still keep themselves.)
 - Gone: SAVE held + keys 1-8 (go / copy), SAVE PATTERN?, the PATTERNS view, the program "save as". SAVE held + SELECT
   still dices a new sound.
+- **Its own store.** Up to 3.0 Shine On kept its programs and patterns where OberVave keeps them, so after switching
+  between the two each read the other's patterns as its own, and a save overwrote them. On the FM-1 Shine On now has
+  its own place in the flash; on the first start of 3.5 its programs come over, and its patterns too when Shine On was
+  the last to run (OberVave's stay where they are, untouched). On the SMK-37, where there is no room for a second
+  store, Shine On marks the store as its own: data of the other firmware is cleared instead of misread (3.0's own data
+  stays).
 - **VIBE LINK:** the FM-1 as a controller for the VIBE FM from inside Shine On (OUTPUT page, SELECT pressed: OFF / ON /
   CONTROL).
 - **Backup** of programs, patterns and settings over USB (the same protocol as OberVave's backup page).
