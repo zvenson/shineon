@@ -150,3 +150,5 @@ Shine On is inspired by the string machines of the seventies (the ARP / Eminent 
 Those names are trademarks of their owners; Shine On is not made by or affiliated with them, and none of the marks
 appear in the firmware. "M-VAVE" and "FM-1" belong to their owners too. The name is a wink at a certain
 nine-part song that was played through one; no song or artist is named in the firmware.
+
+You can also try Shine On in the browser, no flashing needed, in the free community [FM-1 Emulator](https://fm1-emulator.atst.tools/).
