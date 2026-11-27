@@ -3,7 +3,7 @@
 Shine On for the M-VAVE FM-1 (and, as a beta, the M-Vave SMK-37). Newest first. Each release is on
 [GitHub](https://github.com/zvenson/shineon/releases) and on [the Firmware Hub](https://thefirmwarehub.com/firmware/shineon/).
 
-## 3.5.2 – coming
+## 3.5.2 – 2026-11-27
 
 - **The newer FM-1s' screen:** on the units with the FM-1 / M-VAVE logo under the screen (most with the UC25HQ80 flash,
   0xB36014) the colours came out washed out, without reds, or the screen stayed blank. Shine On now sends the display
