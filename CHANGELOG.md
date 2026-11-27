@@ -3,6 +3,14 @@
 Shine On for the M-VAVE FM-1 (and, as a beta, the M-Vave SMK-37). Newest first. Each release is on
 [GitHub](https://github.com/zvenson/shineon/releases) and on [the Firmware Hub](https://thefirmwarehub.com/firmware/shineon/).
 
+## 3.5.2 – coming
+
+- **The newer FM-1s' screen:** on the units with the FM-1 / M-VAVE logo under the screen (most with the UC25HQ80 flash,
+  0xB36014) the colours came out washed out, without reds, or the screen stayed blank. Shine On now sends the display
+  M-VAVE's own settings, in M-VAVE's order, instead of leaving them at the panel's defaults. The first FM-1s look as
+  before. As in Dinghy 0.6.1 and OberVave 3.5.5, after Jake Handy's h1 –
+  [why and how](https://github.com/zvenson/dinghy/blob/main/docs/NEWER-FM1-SCREEN.md).
+
 ## 3.5 – 2026-11-12
 
 - **Saving made simple: MEMORY** (as OberVave 3.5). SAVE opens one page with the 8 memory slots. A slot holds
